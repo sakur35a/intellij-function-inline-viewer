@@ -54,19 +54,43 @@ object CallTargets {
         return call
     }
 
-    /** 호출 대상이 프로젝트 소스(테스트 포함)에 정의된 메서드일 때만 돌려준다. 라이브러리/JDK 는 null. */
+    /**
+     * 호출 대상이 프로젝트 소스(테스트 포함)에 자기 선언이 있는 메서드일 때만 돌려준다.
+     * 라이브러리/JDK, 그리고 컴파일러가 만든 메서드(enum values()/valueOf(), record 암묵 접근자,
+     * Kotlin data class copy()/componentN(), 프로퍼티 getter/setter, Lombok 등)는 보여줄 함수 본문이 없으므로 null.
+     */
     fun resolveProjectMethod(call: UCallExpression): PsiMethod? {
         val method = call.resolve() ?: return null
         if (method is PsiCompiledElement) return null
-        val declaration = declarationOf(method)
-        val file = declaration.containingFile?.virtualFile ?: return null
-        if (!ProjectFileIndex.getInstance(method.project).isInSourceContent(file)) return null
-        return method
+        return method.takeIf { isProjectDeclaration(it) }
     }
 
-    /** 실제 소스 선언 PSI (Kotlin light method 이면 KtNamedFunction 등). */
-    fun declarationOf(method: PsiMethod): PsiElement =
-        method.toUElementOfType<UMethod>()?.sourcePsi ?: method.navigationElement
+    /** [method] 가 프로젝트 소스에 자기 함수 선언을 가지는지 */
+    fun isProjectDeclaration(method: PsiMethod): Boolean {
+        val declaration = ownDeclaration(method) ?: return false
+        val file = declaration.containingFile?.virtualFile ?: return false
+        return ProjectFileIndex.getInstance(method.project).isInSourceContent(file)
+    }
+
+    /**
+     * 소스에 있는 메서드 자신의 선언. Java 는 실제 PsiMethod, Kotlin 은 KtNamedFunction 만 인정한다.
+     * 합성 메서드는 UAST 소스가 없거나(위치 없음) 클래스/필드/파라미터/프로퍼티/접근자라서 null.
+     */
+    private fun ownDeclaration(method: PsiMethod): PsiElement? {
+        val source = method.toUElementOfType<UMethod>()?.sourcePsi ?: return null
+        if (!source.isPhysical || source.textRange == null) return null
+        return when {
+            source is PsiMethod -> source
+            // Kotlin 플러그인이 없을 때 클래스를 로드하지 않도록 이름으로 비교한다.
+            source.javaClass.name == KT_NAMED_FUNCTION -> source
+            else -> null
+        }
+    }
+
+    private const val KT_NAMED_FUNCTION = "org.jetbrains.kotlin.psi.KtNamedFunction"
+
+    /** 실제 소스 선언 PSI (Kotlin light method 이면 KtNamedFunction). [isProjectDeclaration] 을 통과한 메서드에 쓴다. */
+    fun declarationOf(method: PsiMethod): PsiElement = ownDeclaration(method) ?: method.navigationElement
 
     /**
      * 힌트에 보여줄 "이름(파라미터...)".

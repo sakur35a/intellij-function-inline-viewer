@@ -78,6 +78,8 @@ class FunctionBody(
     val lines: List<BodyLine>,
     val target: SmartPsiElementPointer<PsiElement>,
     val hasBody: Boolean,
+    /** [lines] 중 원본 줄 수. 그 뒤는 덧붙인 안내 줄(구현체/재정의 목록)이라 최대 줄 수로 자르지 않는다. */
+    val sourceLineCount: Int = lines.size,
 ) {
     val calls: Sequence<BodyCall> get() = lines.asSequence().flatMap { it.calls }
 
@@ -102,8 +104,10 @@ class FunctionBody(
 
             val firstCode = generateSequence(declaration.firstChild) { it.nextSibling }
                 .firstOrNull { it !is PsiComment && it !is PsiWhiteSpace && it.textLength > 0 }
-            val start = firstCode?.textRange?.startOffset ?: declaration.textRange.startOffset
-            val end = declaration.textRange.endOffset
+            // 합성(가상) 요소는 위치가 없다. resolveProjectMethod 에서 걸러지지만 여기서도 방어한다.
+            val range = declaration.textRange ?: return null
+            val start = firstCode?.textRange?.startOffset ?: range.startOffset
+            val end = range.endOffset
             if (start >= end) return null
 
             val chars = document.immutableCharSequence
@@ -114,14 +118,18 @@ class FunctionBody(
                     .also { it.setText(chars.subSequence(start, end)) }
             }
 
+            val maxLines = InlineCallSettings.getInstance().state.maxLines
+            val lastVisibleLine = minOf(document.getLineNumber(start) + maxLines - 1, document.getLineNumber(end))
+            val visibleEnd = minOf(document.getLineEndOffset(lastVisibleLine), end)
             val callEnds = Perf.measure("body.calls", detail = { "name=${(declaration as? PsiNamedElement)?.name}" }) {
-                collectCalls(declaration, start, end)
+                // 본문 안 호출 resolve 도 화면에 보이는 줄(최대 줄 수)까지만 한다(수천 줄짜리 메서드 대비).
+                collectCalls(declaration, start, visibleEnd)
             }
             var semanticNanos = 0L
             var semanticTokens = 0
 
             val labelCounts = HashMap<String, Int>()
-            val semanticLineLimit = InlineCallSettings.getInstance().state.maxLines
+            val semanticLineLimit = maxLines
             val firstLine = document.getLineNumber(start)
             val indent = start - document.getLineStartOffset(firstLine)
             val lines = (firstLine..document.getLineNumber(end)).map { line ->
@@ -174,7 +182,7 @@ class FunctionBody(
                 method != null && isOverridable(method.javaPsi) -> lines + findOverridesLine(declaration)
                 else -> lines
             }
-            return FunctionBody(file, document.modificationStamp, allLines, target, hasBody)
+            return FunctionBody(file, document.modificationStamp, allLines, target, hasBody, sourceLineCount = lines.size)
         }
 
         /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
@@ -189,7 +197,7 @@ class FunctionBody(
             val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
             val lines = overridingLines(method, header = null, emptyKey = "body.no.overrides", event = "body.overrides")
             val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
-            return FunctionBody(file, document.modificationStamp, lines, target, hasBody = true)
+            return FunctionBody(file, document.modificationStamp, lines, target, hasBody = true, sourceLineCount = 0)
         }
 
         /** 재정의될 수 있는 인스턴스 메서드인지(인터페이스 default, final 아닌 클래스의 final 아닌 메서드, Kotlin open) */
@@ -226,7 +234,7 @@ class FunctionBody(
                     .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
             }
             val implementations = found.take(MAX_IMPLEMENTATIONS).filter {
-                CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
+                CallTargets.isProjectDeclaration(it) && CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
             }
             if (implementations.isEmpty()) return listOf(note(InlineCallBundle.message(emptyKey)))
 

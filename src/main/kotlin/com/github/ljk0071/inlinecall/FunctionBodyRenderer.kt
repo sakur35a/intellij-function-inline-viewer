@@ -78,13 +78,22 @@ class FunctionBodyRenderer(
         val result = ArrayList<Row>()
         fun visit(nodes: List<BodyNode>) {
             nodes.forEachIndexed { index, node ->
-                val lines = node.body.lines
-                lines.take(maxLines).forEachIndexed { lineIndex, line ->
-                    if (line.nestedOnly && !canExpand(node)) return@forEachIndexed
-                    result += Row(node, line, null, separator = index > 0 && lineIndex == 0)
+                val body = node.body
+                var first = index > 0
+                fun add(line: BodyLine) {
+                    if (line.nestedOnly && !canExpand(node)) return
+                    result += Row(node, line, null, separator = first)
+                    first = false
                     for (call in line.calls) node.children[call]?.let(::visit)
                 }
-                if (lines.size > maxLines) result += Row(node, null, "… (${lines.size - maxLines} more lines)")
+                // 원본 줄만 최대 줄 수로 자르고, 덧붙인 안내 줄(구현체/재정의 목록)은 항상 보여준다.
+                val source = body.lines.subList(0, body.sourceLineCount)
+                source.take(maxLines).forEach(::add)
+                if (source.size > maxLines) {
+                    result += Row(node, null, "… (${source.size - maxLines} more lines)", separator = first)
+                    first = false
+                }
+                body.lines.subList(body.sourceLineCount, body.lines.size).forEach(::add)
             }
         }
         visit(roots)

@@ -73,6 +73,60 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         )
     }
 
+    /** 컴파일러가 만든 메서드는 소스에 함수 본문이 없으므로 힌트를 붙이지 않는다(예전엔 enum values() 클릭 시 NPE). */
+    fun testNoHintsForSyntheticJavaMethods() {
+        doTestProvider(
+            "E.java",
+            """
+            enum E {
+                A;
+                static void m(R r) {
+                    E.values();
+                    E.valueOf("A");
+                    r.x();
+                    r.y()/*<# ▶ |y() #>*/;
+                }
+            }
+            record R(int x, int y) {
+                public int y() { return y; }
+            }
+            """.trimIndent(),
+            InlineCallHintsProvider(),
+        )
+    }
+
+    fun testNoHintsForSyntheticKotlinMembers() {
+        myFixture.addFileToProject(
+            "demo/D.kt",
+            """
+            package demo
+            data class D(val a: Int) {
+                var b: Int = 0
+                val c: Int get() = a + 1
+                fun f(): Int = a
+            }
+            """.trimIndent(),
+        )
+        doTestProvider(
+            "Main.java",
+            """
+            package demo;
+            class Main {
+                void m(D d) {
+                    d.copy(1);
+                    d.component1();
+                    d.getA();
+                    d.getB();
+                    d.setB(2);
+                    d.getC();
+                    d.f()/*<# ▶ |f() #>*/;
+                }
+            }
+            """.trimIndent(),
+            InlineCallHintsProvider(),
+        )
+    }
+
     fun testSameLineChainIsMerged() {
         myFixture.addFileToProject("demo/B.java", chainClass)
         doTestProvider(

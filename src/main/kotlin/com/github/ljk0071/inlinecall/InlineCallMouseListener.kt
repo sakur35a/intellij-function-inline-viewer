@@ -26,8 +26,16 @@ import javax.swing.SwingUtilities
  */
 class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
-    /** 밑줄이 그려진 본문 inlay (motion 리스너 인스턴스에서만 쓰인다) */
-    private var hoveredInlay: Inlay<*>? = null
+    private companion object {
+        /**
+         * 밑줄/손가락 커서를 표시한 inlay. 플랫폼은 mouse 리스너와 motion 리스너를 별도 인스턴스로 만들기 때문에
+         * (mouseExited 는 mouse 쪽, mouseMoved 는 motion 쪽) 두 인스턴스가 같은 상태를 보도록 공유한다. EDT 전용.
+         */
+        var hoveredInlay: Inlay<*>? = null
+
+        /** setCustomCursor 요청자. 인스턴스가 달라도 같은 커서 설정을 덮어쓰고 지우도록 고정한다. */
+        val CURSOR_REQUESTOR = Any()
+    }
 
     override fun mousePressed(e: EditorMouseEvent) {
         if (e.area != EditorMouseEventArea.EDITING_AREA || !SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
@@ -63,7 +71,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
                 val overText = bounds != null &&
                     DeclarativeHint.isOverText(inlay, Point(point.x - bounds.x, point.y - bounds.y)) == true
                 hoveredInlay = inlay
-                (e.editor as? EditorEx)?.setCustomCursor(this, if (overText) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+                (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, if (overText) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
             }
             return
         }
@@ -72,7 +80,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             inlay.repaint()
         }
         hoveredInlay = if (clickable) inlay else null
-        (e.editor as? EditorEx)?.setCustomCursor(this, if (clickable) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+        (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, if (clickable) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
     }
 
     /** 본문 안의 ▶ 힌트: 펼쳐져 있으면 접고, 아니면 대상 본문을 백그라운드에서 읽어 펼친다. */
@@ -103,7 +111,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         hoveredInlay = null
         (inlay.renderer as? FunctionBodyRenderer)?.hovered = null
         if (inlay.isValid) inlay.repaint()
-        (editor as? EditorEx)?.setCustomCursor(this, null)
+        (editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, null)
     }
 
     private fun isNavigationModifier(event: MouseEvent): Boolean =
