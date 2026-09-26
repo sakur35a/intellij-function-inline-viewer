@@ -63,6 +63,28 @@ git push --follow-tags
 `release` runs the `git` command, so commit signing (`commit.gpgsign`) works through gpg-agent. The plugin's own
 `releaseVersion` commits through JGit, which cannot use gpg-agent and fails when commits are signed.
 
+Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`: it checks that the computed version matches the tag, runs the
+tests and the Plugin Verifier, publishes to JetBrains Marketplace, and creates a GitHub release with the zip. Repository
+secrets:
+
+| Secret | |
+|---|---|
+| `PUBLISH_TOKEN` | Marketplace token (profile → My Tokens) |
+| `CERTIFICATE_CHAIN` | Plugin signing certificate chain, Base64 (`base64 < chain.crt`) — optional |
+| `PRIVATE_KEY` | Encrypted signing key, Base64 (`base64 < private_encrypted.pem`) — optional |
+| `PRIVATE_KEY_PASSWORD` | Password of the signing key — optional |
+
+Without the signing secrets the plugin is published unsigned. To create a key and a self-signed certificate
+([Plugin Signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html)):
+
+```bash
+openssl genpkey -aes-256-cbc -algorithm RSA -out private_encrypted.pem -pkeyopt rsa_keygen_bits:4096
+openssl rsa -in private_encrypted.pem -out private.pem
+openssl req -key private.pem -new -x509 -days 365 -out chain.crt
+```
+
+Keep the key files out of the repository.
+
 ## Notes on internal APIs
 
 The editor's declarative hints offer no public way to identify a hint's provider or to read which arrow (▶/▼) is displayed,
