@@ -18,6 +18,9 @@ class InlineCallSettings : SimplePersistentStateComponent<InlineCallSettings.Opt
 
         /** 본문 안에서 다시 펼칠 수 있는 최대 깊이. 0 이면 중첩 펼침을 끈다. */
         var maxDepth by property(FunctionBodyRenderer.DEFAULT_MAX_DEPTH)
+
+        /** 같은 줄의 체인 호출 `a.foo().bar()` 을 끝에 힌트 하나로 합친다. */
+        var mergeChains by property(true)
     }
 
     companion object {

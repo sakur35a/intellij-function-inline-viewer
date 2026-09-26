@@ -20,6 +20,7 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
         val options = InlineCallSettings.getInstance().state
         assertEquals(30, options.maxLines)
         assertEquals(4, options.maxDepth)
+        assertTrue(options.mergeChains)
     }
 
     fun testNewExpansionUsesSettings() {
@@ -42,12 +43,12 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
         val helper = (myFixture.file as PsiJavaFile).classes.single().findMethodsByName("helper", false).single()
         val editor = myFixture.editor
         val callEnd = editor.document.text.indexOf("helper(1)") + "helper(1)".length
-        ExpandedCalls.expand(editor, TextRange(callEnd - "helper(1)".length, callEnd), CallTargets.body(helper)!!, 0)
+        ExpandedCalls.expand(editor, TextRange(callEnd - "helper(1)".length, callEnd), listOf(CallTargets.body(helper)!!), 0)
 
         val renderer = editor.inlayModel.getBlockElementsInRange(0, editor.document.textLength)
             .single().renderer as FunctionBodyRenderer
         assertEquals(listOf("int helper(int x) {", "    int y = x + 1;", "… (2 more lines)"), renderer.visibleText())
         // maxDepth = 0 이면 본문 안의 호출도 펼칠 수 없다.
-        assertFalse(renderer.expand(renderer.root, BodyCall(0, "x", SmartPointerManager.createPointer<PsiElement>(helper)), CallTargets.body(helper)!!))
+        assertFalse(renderer.expand(renderer.roots.single(), BodyCall(0, "x", listOf(SmartPointerManager.createPointer<PsiElement>(helper)), "x#1"), listOf(CallTargets.body(helper)!!)))
     }
 }

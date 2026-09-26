@@ -117,7 +117,7 @@ class FunctionBodyTest : BasePlatformTestCase() {
         val caller = PsiTreeUtil.findChildrenOfType(myFixture.file, KtNamedFunction::class.java).single { it.name == "caller" }
         val body = FunctionBody.of(caller)!!
         assertEquals(listOf("helper(x)"), body.lines[1].calls.map { it.label })
-        assertInstanceOf(body.lines[1].calls.single().target.element, KtNamedFunction::class.java)
+        assertInstanceOf(body.lines[1].calls.single().targets.single().element, KtNamedFunction::class.java)
     }
 
     fun testNestedExpandCollapseAndDepthLimit() {
@@ -131,13 +131,13 @@ class FunctionBodyTest : BasePlatformTestCase() {
             }
             """.trimIndent(),
         )
-        val renderer = FunctionBodyRenderer(CallTargets.body(javaMethod("fact"))!!, indentPx = 0, maxDepth = 2)
+        val renderer = FunctionBodyRenderer(listOf(CallTargets.body(javaMethod("fact"))!!), indentPx = 0, maxDepth = 2)
 
         fun expandDeepest(): Boolean {
-            var node = renderer.root
-            while (node.children.isNotEmpty()) node = node.children.values.single()
+            var node = renderer.roots.single()
+            while (node.children.isNotEmpty()) node = node.children.values.single().single()
             val call = node.body.lines[1].calls.single()
-            return renderer.expand(node, call, FunctionBody.of(call.target.element!!)!!)
+            return renderer.expand(node, call, listOf(FunctionBody.of(call.targets.single().element!!)!!))
         }
 
         assertTrue(expandDeepest())
@@ -157,7 +157,7 @@ class FunctionBodyTest : BasePlatformTestCase() {
         assertFalse(expandDeepest())
         assertEquals(9, renderer.visibleText().size)
 
-        val root = renderer.root
+        val root = renderer.roots.single()
         assertTrue(renderer.collapse(root, root.body.lines[1].calls.single()))
         assertEquals(3, renderer.visibleText().size)
     }

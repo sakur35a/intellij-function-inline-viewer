@@ -27,7 +27,7 @@ class InlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase() {
             package demo;
             public class Main {
                 public static void main(String[] args) {
-                    int sum = MathUtil.add(1, 2)/*<# ▶ |add|(a, b) #>*/;
+                    int sum = MathUtil.add(1, 2)/*<# ▶ |add(a, b) #>*/;
                     System.out.println(sum);
                 }
             }

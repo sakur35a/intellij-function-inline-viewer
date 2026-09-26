@@ -44,11 +44,11 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             package demo
 
             fun main() {
-                val sum = add(1, 2)/*<# ▶ |add|(a, b) #>*/
-                val t = sum.twice()/*<# ▶ |twice|() #>*/
+                val sum = add(1, 2)/*<# ▶ |add(a, b) #>*/
+                val t = sum.twice()/*<# ▶ |twice() #>*/
                 runBlock {
-                    add(3, 4)/*<# ▶ |add|(a, b) #>*/
-                }/*<# ▶ |runBlock|(block) #>*/
+                    add(3, 4)/*<# ▶ |add(a, b) #>*/
+                }/*<# ▶ |runBlock(block) #>*/
             }
             """.trimIndent(),
             InlineCallHintsProvider(),
@@ -71,7 +71,7 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             package demo
 
             fun main() {
-                MathUtil.add(1, 2)/*<# ▶ |add|(a, b) #>*/
+                MathUtil.add(1, 2)/*<# ▶ |add(a, b) #>*/
             }
             """.trimIndent(),
             InlineCallHintsProvider(),

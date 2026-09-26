@@ -7,6 +7,7 @@ import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.ex.util.EditorUIUtil
 import com.intellij.openapi.editor.markup.TextAttributes
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
@@ -15,10 +16,13 @@ import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.geom.Rectangle2D
 
-/** 펼쳐진 본문 하나. [children] 은 본문 안에서 다시 펼친 호출들. */
+/** 펼쳐진 본문 하나. [children] 은 본문 안에서 다시 펼친 호출들(체인이면 호출 하나에 본문 여러 개). */
 class BodyNode(val body: FunctionBody, val depth: Int) {
-    val children = LinkedHashMap<BodyCall, BodyNode>()
+    val children = LinkedHashMap<BodyCall, List<BodyNode>>()
 }
+
+/** 다시 계산할 때 펼침 상태를 옮기기 위한 스냅샷. [BodyCall.key] 로 새 본문의 호출과 맞춘다. */
+class BodySnapshot(val body: FunctionBody, val children: Map<String, List<BodySnapshot>>)
 
 /** 렌더러 안에서 클릭된 대상 */
 sealed interface BodyHit {
@@ -32,7 +36,7 @@ sealed interface BodyHit {
  * 원본 위치를 알고 있어서 [hitTest] 로 클릭 지점의 원본 오프셋을 구할 수 있다.
  */
 class FunctionBodyRenderer(
-    body: FunctionBody,
+    bodies: List<FunctionBody>,
     private val indentPx: Int,
     private val maxLines: Int = DEFAULT_MAX_LINES,
     private val maxDepth: Int = DEFAULT_MAX_DEPTH,
@@ -45,13 +49,19 @@ class FunctionBodyRenderer(
         const val DEFAULT_MAX_DEPTH = 4
     }
 
-    val root = BodyNode(body, 0)
+    /** 최상위 본문들. 합친 체인이면 여러 개. */
+    var roots: List<BodyNode> = bodies.map { BodyNode(it, 0) }
+        private set
+
+    /** 펼침/접힘/교체마다 증가. 백그라운드 재계산 결과가 그 사이 사용자 조작을 덮어쓰지 않게 한다. */
+    var version = 0
+        private set
 
     /** Cmd 를 누른 채 마우스를 올린 토큰. 밑줄로 표시한다. EDT 에서만 바꾼다. */
     var hovered: BodyToken? = null
 
-    /** 한 줄: 본문의 한 줄이거나, 잘린 줄 수 안내 */
-    private class Row(val node: BodyNode, val line: BodyLine?, val moreText: String?)
+    /** 한 줄: 본문의 한 줄이거나, 안내 문구(잘린 줄 수 / 본문 없음). [separator] 면 위에 구분선을 긋는다. */
+    private class Row(val node: BodyNode, val line: BodyLine?, val moreText: String?, val separator: Boolean = false)
 
     private sealed interface Piece {
         val x: Int
@@ -65,31 +75,64 @@ class FunctionBodyRenderer(
 
     private fun flatten(): List<Row> {
         val result = ArrayList<Row>()
-        fun visit(node: BodyNode) {
-            val lines = node.body.lines
-            for (line in lines.take(maxLines)) {
-                result += Row(node, line, null)
-                for (call in line.calls) node.children[call]?.let(::visit)
+        fun visit(nodes: List<BodyNode>) {
+            nodes.forEachIndexed { index, node ->
+                val lines = node.body.lines
+                lines.take(maxLines).forEachIndexed { lineIndex, line ->
+                    result += Row(node, line, null, separator = index > 0 && lineIndex == 0)
+                    for (call in line.calls) node.children[call]?.let(::visit)
+                }
+                if (lines.size > maxLines) result += Row(node, null, "… (${lines.size - maxLines} more lines)")
+                if (!node.body.hasBody) result += Row(node, null, InlineCallBundle.message("body.no.body"))
             }
-            if (lines.size > maxLines) result += Row(node, null, "… (${lines.size - maxLines} more lines)")
         }
-        visit(root)
+        visit(roots)
         return result
+    }
+
+    private fun changed() {
+        rows = flatten()
+        version++
     }
 
     /** EDT 전용. 이미 펼쳐져 있었으면 접고 true. 호출 후 inlay.update() 필요. */
     fun collapse(node: BodyNode, call: BodyCall): Boolean {
         node.children.remove(call) ?: return false
-        rows = flatten()
+        changed()
         return true
     }
 
     /** EDT 전용. 호출 후 inlay.update() 필요. */
-    fun expand(node: BodyNode, call: BodyCall, body: FunctionBody): Boolean {
-        if (node.children.containsKey(call) || !canExpand(node)) return false
-        node.children[call] = BodyNode(body, node.depth + 1)
-        rows = flatten()
+    fun expand(node: BodyNode, call: BodyCall, bodies: List<FunctionBody>): Boolean {
+        if (bodies.isEmpty() || node.children.containsKey(call) || !canExpand(node)) return false
+        node.children[call] = bodies.map { BodyNode(it, node.depth + 1) }
+        changed()
         return true
+    }
+
+    /** EDT 전용. 다시 계산한 트리로 바꾼다. 호출 후 inlay.update() 필요. */
+    fun replaceRoots(newRoots: List<BodyNode>) {
+        hovered = null
+        roots = newRoots
+        changed()
+    }
+
+    /** EDT 전용. 현재 펼침 상태 스냅샷. */
+    fun snapshot(): List<BodySnapshot> {
+        fun snap(node: BodyNode): BodySnapshot =
+            BodySnapshot(node.body, node.children.entries.associate { (call, nodes) -> call.key to nodes.map(::snap) })
+        return roots.map(::snap)
+    }
+
+    /** 보이는 본문들의 원본 파일. 이 파일이 바뀌면 다시 계산한다. */
+    fun files(): Set<VirtualFile> {
+        val result = HashSet<VirtualFile>()
+        fun visit(node: BodyNode) {
+            result += node.body.file
+            node.children.values.forEach { it.forEach(::visit) }
+        }
+        roots.forEach(::visit)
+        return result
     }
 
     private fun canExpand(node: BodyNode) = node.depth < maxDepth
@@ -180,6 +223,11 @@ class FunctionBodyRenderer(
             // 깊이마다 왼쪽 세로 막대로 "펼쳐진 본문" 영역임을 표시
             g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.35)
             for (depth in 0..row.node.depth) g.fillRect(barX(editor, x, depth), rowY, barWidth, lineHeight)
+            // 합친 체인의 본문 사이 구분선
+            if (row.separator) {
+                val left = barX(editor, x, row.node.depth)
+                g.fillRect(left, rowY, (calcWidthInPixels(inlay) - (left - x)).coerceAtLeast(0), JBUI.scale(1))
+            }
 
             row.moreText?.let {
                 g.font = font(editor, null)

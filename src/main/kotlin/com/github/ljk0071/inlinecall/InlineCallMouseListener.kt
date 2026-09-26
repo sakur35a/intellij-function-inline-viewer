@@ -69,11 +69,11 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             return
         }
         val project = editor.project ?: return
-        ReadAction.nonBlocking<FunctionBody?> { call.target.element?.let(FunctionBody::of) }
+        ReadAction.nonBlocking<List<FunctionBody>> { call.targets.mapNotNull { it.element?.let(FunctionBody::of) } }
             .expireWith(project)
             .expireWhen { !inlay.isValid }
-            .finishOnUiThread(ModalityState.defaultModalityState()) { body ->
-                if (body != null && renderer.expand(node, call, body)) inlay.update()
+            .finishOnUiThread(ModalityState.defaultModalityState()) { bodies ->
+                if (renderer.expand(node, call, bodies)) inlay.update()
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
@@ -133,29 +133,18 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             .expireWhen { editor.isDisposed }
             .finishOnUiThread(ModalityState.defaultModalityState()) { expansion ->
                 if (expansion == null || ExpandedCalls.isExpanded(editor, callEndOffset)) return@finishOnUiThread
-                ExpandedCalls.expand(editor, expansion.callRange, expansion.body, indentPx(editor, expansion.callRange.startOffset))
+                ExpandedCalls.expand(editor, expansion.callRange, expansion.bodies, indentPx(editor, expansion.callRange.startOffset))
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
-    private class Expansion(val callRange: TextRange, val body: FunctionBody)
+    private class Expansion(val callRange: TextRange, val bodies: List<FunctionBody>)
 
     private fun findExpansion(editor: Editor, callEndOffset: Int): Expansion? {
         val project = editor.project ?: return null
         val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return null
-        if (callEndOffset <= 0) return null
-        // 힌트는 호출식 끝에 붙으므로, 끝 오프셋이 같은 부모들 중 호출식을 찾는다.
-        var element = psiFile.findElementAt(callEndOffset - 1)
-        while (element != null && element.textRange.endOffset == callEndOffset) {
-            val call = CallTargets.toCall(element)
-            if (call != null) {
-                val method = CallTargets.resolveProjectMethod(call) ?: return null
-                val body = CallTargets.body(method) ?: return null
-                return Expansion(element.textRange, body)
-            }
-            element = element.parent
-        }
-        return null
+        val (range, methods) = CallTargets.hintAt(psiFile, callEndOffset) ?: return null
+        return Expansion(range, methods.mapNotNull(CallTargets::body).ifEmpty { return null })
     }
 
     /** 호출부가 있는 줄의 들여쓰기 위치에 본문을 맞춘다. */

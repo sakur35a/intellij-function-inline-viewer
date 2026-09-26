@@ -1,12 +1,25 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ModalityState
+import com.intellij.openapi.application.ReadAction
+import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.RangeMarker
+import com.intellij.openapi.editor.event.DocumentEvent
+import com.intellij.openapi.editor.event.DocumentListener
+import com.intellij.openapi.editor.ex.util.EditorUtil
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
 import com.intellij.openapi.util.TextRange
-import com.intellij.openapi.util.UserDataHolderEx
+import com.intellij.psi.PsiDocumentManager
+import com.intellij.psi.PsiElement
+import com.intellij.util.concurrency.AppExecutorUtil
+import org.jetbrains.annotations.TestOnly
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -15,53 +28,170 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object ExpandedCalls {
 
-    private val KEY = Key.create<MutableMap<RangeMarker, Inlay<*>>>("inline.call.expanded")
-
-    private fun entries(editor: Editor): MutableMap<RangeMarker, Inlay<*>> =
-        editor.getUserData(KEY)
-            ?: (editor as UserDataHolderEx).putUserDataIfAbsent(KEY, ConcurrentHashMap())
+    private val KEY = Key.create<EditorExpansions>("inline.call.expanded")
 
     /** 백그라운드(힌트 수집)에서도 호출된다. */
     fun isExpanded(editor: Editor, callEndOffset: Int): Boolean =
-        editor.getUserData(KEY)?.entries?.any { (marker, inlay) ->
-            marker.isValid && inlay.isValid && marker.endOffset == callEndOffset
-        } == true
+        editor.getUserData(KEY)?.isExpanded(callEndOffset) == true
 
     /** EDT 전용. 펼쳐져 있었으면 접고 true 를 돌려준다. */
-    fun collapse(editor: Editor, callEndOffset: Int): Boolean {
-        val map = entries(editor)
-        cleanUp(map)
-        val found = map.keys.firstOrNull { it.endOffset == callEndOffset } ?: return false
-        map.remove(found)?.let { Disposer.dispose(it) }
-        found.dispose()
-        return true
-    }
+    fun collapse(editor: Editor, callEndOffset: Int): Boolean =
+        editor.getUserData(KEY)?.collapse(callEndOffset) == true
 
     /** EDT 전용. */
-    fun expand(editor: Editor, callRange: TextRange, body: FunctionBody, indentPx: Int) {
-        val map = entries(editor)
-        cleanUp(map)
-        val inlay = editor.inlayModel.addBlockElement(
-            callRange.endOffset,
-            /* relatesToPrecedingText = */ true,
-            /* showAbove = */ false,
-            /* priority = */ 0,
-            InlineCallSettings.getInstance().state.let { FunctionBodyRenderer(body, indentPx, it.maxLines, it.maxDepth) },
-        ) ?: return
-        val marker = editor.document.createRangeMarker(callRange)
-        map[marker] = inlay
+    fun expand(editor: Editor, callRange: TextRange, bodies: List<FunctionBody>, indentPx: Int) {
+        if (bodies.isEmpty() || editor.isDisposed) return
+        val expansions = editor.getUserData(KEY) ?: EditorExpansions(editor).also {
+            editor.putUserData(KEY, it)
+            // 에디터가 닫히면 marker/inlay/리스너를 모두 해제한다(문서에 붙은 RangeMarker 누수 방지).
+            EditorUtil.disposeWithEditor(editor, it)
+        }
+        expansions.expand(callRange, bodies, indentPx)
     }
 
-    /** 편집으로 호출부가 지워지는 등 무효해진 항목 정리 */
-    private fun cleanUp(map: MutableMap<RangeMarker, Inlay<*>>) {
-        val iterator = map.entries.iterator()
-        while (iterator.hasNext()) {
-            val (marker, inlay) = iterator.next()
-            if (!marker.isValid || !inlay.isValid) {
-                if (inlay.isValid) Disposer.dispose(inlay)
-                marker.dispose()
-                iterator.remove()
+    /** 테스트용: 대기 중인 재계산을 즉시 동기로 수행한다. */
+    @TestOnly
+    fun refreshNow(editor: Editor) {
+        editor.getUserData(KEY)?.refreshNow()
+    }
+
+    @TestOnly
+    fun markerCount(editor: Editor): Int = editor.getUserData(KEY)?.size ?: 0
+
+    private class EditorExpansions(private val editor: Editor) : Disposable {
+
+        private val entries = ConcurrentHashMap<RangeMarker, Inlay<FunctionBodyRenderer>>()
+
+        val size: Int get() = entries.size
+
+        init {
+            // 호출부가 있는 문서 또는 펼친 본문의 원본 문서가 바뀌면 다시 계산한다.
+            EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
+                override fun documentChanged(event: DocumentEvent) {
+                    if (isRelevant(event.document)) scheduleRefresh()
+                }
+            }, this)
+        }
+
+        fun isExpanded(callEndOffset: Int): Boolean =
+            entries.entries.any { (marker, inlay) -> marker.isValid && inlay.isValid && marker.endOffset == callEndOffset }
+
+        fun collapse(callEndOffset: Int): Boolean {
+            val marker = entries.keys.firstOrNull { it.isValid && it.endOffset == callEndOffset } ?: return false
+            remove(marker)
+            return true
+        }
+
+        fun expand(callRange: TextRange, bodies: List<FunctionBody>, indentPx: Int) {
+            val options = InlineCallSettings.getInstance().state
+            val inlay = editor.inlayModel.addBlockElement(
+                callRange.endOffset,
+                /* relatesToPrecedingText = */ true,
+                /* showAbove = */ false,
+                /* priority = */ 0,
+                FunctionBodyRenderer(bodies, indentPx, options.maxLines, options.maxDepth),
+            ) ?: return
+            entries[editor.document.createRangeMarker(callRange)] = inlay
+        }
+
+        private fun remove(marker: RangeMarker) {
+            entries.remove(marker)?.let { if (it.isValid) Disposer.dispose(it) }
+            marker.dispose()
+        }
+
+        private fun isRelevant(document: Document): Boolean {
+            if (entries.isEmpty()) return false
+            if (document == editor.document) return true
+            val file = FileDocumentManager.getInstance().getFile(document) ?: return false
+            return entries.values.any { it.isValid && file in it.renderer.files() }
+        }
+
+        // ---- 다시 계산 ----
+
+        private class Pending(val marker: RangeMarker, val inlay: Inlay<FunctionBodyRenderer>, val version: Int, val snapshot: List<BodySnapshot>)
+
+        /** null 이면 더 이상 프로젝트 함수 호출이 아니므로 접는다. */
+        private class Result(val pending: Pending, val roots: List<BodyNode>?)
+
+        private fun pending(): List<Pending> =
+            entries.map { (marker, inlay) -> Pending(marker, inlay, inlay.renderer.version, inlay.renderer.snapshot()) }
+
+        private fun scheduleRefresh() {
+            val project = editor.project ?: return
+            val pending = pending()
+            if (pending.isEmpty()) return
+            // 입력이 이어지면 이전 계산은 취소되고(coalesce) 마지막 것만 반영된다.
+            ReadAction.nonBlocking<List<Result>> { pending.map(::compute) }
+                .withDocumentsCommitted(project)
+                .expireWith(this)
+                .coalesceBy(this)
+                .finishOnUiThread(ModalityState.defaultModalityState(), ::apply)
+                .submit(AppExecutorUtil.getAppExecutorService())
+        }
+
+        fun refreshNow() {
+            val project = editor.project ?: return
+            PsiDocumentManager.getInstance(project).commitAllDocuments()
+            apply(ReadAction.compute<List<Result>, RuntimeException> { pending().map(::compute) })
+        }
+
+        private fun compute(pending: Pending): Result {
+            val marker = pending.marker
+            if (!marker.isValid || marker.startOffset >= marker.endOffset) return Result(pending, null)
+            val project = editor.project ?: return Result(pending, null)
+            val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return Result(pending, null)
+            // 호출부를 다시 resolve 해서 대상이 바뀌었거나 사라졌는지 확인한다.
+            val (_, methods) = CallTargets.hintAt(psiFile, marker.endOffset) ?: return Result(pending, null)
+            val roots = methods.mapIndexedNotNull { index, method ->
+                rebuild(CallTargets.declarationOf(method), pending.snapshot.getOrNull(index), depth = 0)
             }
+            return Result(pending, roots.ifEmpty { null })
+        }
+
+        /** [old] 의 펼침 상태를 유지한 채 [declaration] 본문을 다시 만든다. 원본이 그대로면 기존 본문을 재사용한다. */
+        private fun rebuild(declaration: PsiElement, old: BodySnapshot?, depth: Int): BodyNode? {
+            val reusable = old?.body?.takeIf { it.isUpToDate() && it.target.element == declaration }
+            val body = reusable ?: FunctionBody.of(declaration) ?: return null
+            val node = BodyNode(body, depth)
+            if (old == null) return node
+            for (call in body.calls) {
+                val oldChildren = old.children[call.key] ?: continue
+                val children = call.targets.mapIndexedNotNull { index, pointer ->
+                    pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1) }
+                }
+                if (children.isNotEmpty()) node.children[call] = children
+            }
+            return node
+        }
+
+        private fun apply(results: List<Result>) {
+            var removed = false
+            for (result in results) {
+                val pending = result.pending
+                val inlay = entries[pending.marker] ?: continue
+                // 계산하는 사이 사용자가 펼치거나 접었으면 그 상태를 우선한다(다음 변경 때 다시 계산된다).
+                if (inlay !== pending.inlay || inlay.renderer.version != pending.version) continue
+                val roots = result.roots
+                if (roots == null || !inlay.isValid) {
+                    remove(pending.marker)
+                    removed = true
+                } else {
+                    inlay.renderer.replaceRoots(roots)
+                    inlay.update()
+                }
+            }
+            // 호출부 힌트의 ▼ 표시를 되돌리기 위해 힌트를 다시 수집한다.
+            if (removed) {
+                val project = editor.project ?: return
+                PsiDocumentManager.getInstance(project).getPsiFile(editor.document)?.let {
+                    DaemonCodeAnalyzer.getInstance(project).restart(it, "inline call body collapsed")
+                }
+            }
+        }
+
+        override fun dispose() {
+            entries.keys.toList().forEach(::remove)
+            editor.putUserData(KEY, null)
         }
     }
 }

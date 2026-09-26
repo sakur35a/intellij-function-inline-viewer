@@ -12,6 +12,17 @@ public class Main {
         // A-2 확인용: 펼친 본문 안의 ▶ factorial / ▶ multiplyBy 를 클릭하면 한 단계 아래로 펼쳐진다.
         int f = MathUtil.factorial(5);
 
+        // 4단계 확인용
+        // 같은 줄 체인: 끝에 "▶ add(String) → space() → add(int) → build()" 하나만 붙는다.
+        String text = new Builder().add("a").space().add(1).build();
+        // 줄마다 끊은 체인: 호출마다 힌트가 붙는다.
+        String text2 = new Builder()
+                .add("b")
+                .build();
+        // 인터페이스 메서드: 펼치면 선언과 "(no body …)" 만 보인다.
+        Shape shape = () -> 1.0;
+        double area = shape.area();
+
         // JDK 메서드에는 힌트가 붙지 않아야 한다.
         System.out.println(sum);
     }

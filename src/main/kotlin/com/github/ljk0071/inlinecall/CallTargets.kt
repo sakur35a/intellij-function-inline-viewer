@@ -4,16 +4,23 @@ import com.intellij.lang.Language
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
+import com.intellij.openapi.util.TextRange
+import com.intellij.openapi.util.text.StringUtil
 import com.intellij.pom.Navigatable
 import com.intellij.psi.PsiCompiledElement
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiNameIdentifierOwner
 import com.intellij.psi.PsiPolyVariantReference
 import org.jetbrains.uast.UCallExpression
+import org.jetbrains.uast.UElement
+import org.jetbrains.uast.UExpression
 import org.jetbrains.uast.UMethod
+import org.jetbrains.uast.UParenthesizedExpression
+import org.jetbrains.uast.UQualifiedReferenceExpression
 import org.jetbrains.uast.UastCallKind
 import org.jetbrains.uast.getPossiblePsiSourceTypes
 import org.jetbrains.uast.toUElementOfType
@@ -62,14 +69,90 @@ object CallTargets {
         method.toUElementOfType<UMethod>()?.sourcePsi ?: method.navigationElement
 
     /**
-     * 접힌 상태에서 보여줄 "이름(파라미터...)".
+     * 힌트에 보여줄 "이름(파라미터...)".
+     * 같은 이름의 오버로드가 있으면 구분되도록 파라미터 이름 대신 타입을 보여준다.
      * Kotlin light method 의 합성 파라미터(확장 receiver `$this$..`, suspend `$completion`)는 뺀다.
      */
-    fun signatureOf(method: PsiMethod): Pair<String, String> {
+    fun signatureOf(method: PsiMethod): String {
+        val overloaded = (method.containingClass?.findMethodsByName(method.name, false)?.size ?: 1) > 1
         val params = method.parameterList.parameters
             .filterNot { it.name.startsWith("$") }
-            .joinToString(", ") { it.name }
-        return method.name to "($params)"
+            .joinToString(", ") { if (overloaded) it.type.presentableText else it.name }
+        return "${method.name}($params)"
+    }
+
+    /** 체인을 합친 힌트 라벨: "foo() → bar(x)" */
+    fun labelOf(methods: List<PsiMethod>): String = methods.joinToString(" → ", transform = ::signatureOf)
+
+    /**
+     * [call] 뒤에 붙일 힌트가 가리키는 프로젝트 메서드들(체인 안쪽부터). 힌트를 붙이지 않으면 null.
+     * [mergeChains] 이면 같은 줄의 체인 `a.foo().bar()` 는 가장 바깥 호출 뒤에 힌트 하나로 합친다.
+     */
+    fun hintTargets(
+        call: UCallExpression,
+        mergeChains: Boolean = InlineCallSettings.getInstance().state.mergeChains,
+    ): List<PsiMethod>? {
+        if (!mergeChains) return resolveProjectMethod(call)?.let(::listOf)
+        if (outerChainCall(call) != null) return null
+        return sameLineChain(call).mapNotNull(::resolveProjectMethod).ifEmpty { null }
+    }
+
+    /** 힌트 오프셋(호출식 끝)에서 힌트 대상 호출을 찾는다: (호출 범위, 대상 메서드들). 읽기 작업 안에서 호출. */
+    fun hintAt(file: PsiFile, callEndOffset: Int): Pair<TextRange, List<PsiMethod>>? {
+        if (callEndOffset <= 0) return null
+        // 힌트는 호출식 끝에 붙으므로, 끝 오프셋이 같은 부모들 중 호출식을 찾는다.
+        var element = file.findElementAt(callEndOffset - 1)
+        while (element != null && element.textRange.endOffset == callEndOffset) {
+            val call = toCall(element)
+            if (call != null) return hintTargets(call)?.let { element.textRange to it }
+            element = element.parent
+        }
+        return null
+    }
+
+    /** [call] 을 receiver 로 쓰는 같은 줄의 바깥 호출 (`a.foo().bar()` 에서 foo 에 대한 bar) */
+    private fun outerChainCall(call: UCallExpression): UCallExpression? {
+        var self: UElement = call
+        var parent = call.uastParent
+        // Kotlin/Java 모두 foo() 는 먼저 a.foo() 한정식의 selector 로 감싸진다.
+        while (parent is UQualifiedReferenceExpression && parent.selector.sourcePsi == self.sourcePsi) {
+            self = parent
+            parent = parent.uastParent
+        }
+        val outer = when {
+            parent is UQualifiedReferenceExpression && parent.receiver.sourcePsi == self.sourcePsi -> parent.selector as? UCallExpression
+            parent is UCallExpression && innerCall(parent.receiver)?.sourcePsi == call.sourcePsi -> parent
+            else -> null
+        } ?: return null
+        if (outer.kind != UastCallKind.METHOD_CALL || !onSameLine(call, outer)) return null
+        return outer
+    }
+
+    /** [outermost] 부터 receiver 를 따라 같은 줄에 있는 체인 호출들. 안쪽(먼저 실행되는 쪽)부터. */
+    private fun sameLineChain(outermost: UCallExpression): List<UCallExpression> {
+        val chain = arrayListOf(outermost)
+        while (true) {
+            val inner = innerCall(chain.last().receiver) ?: break
+            if (inner.kind != UastCallKind.METHOD_CALL || !onSameLine(inner, chain.last())) break
+            chain += inner
+        }
+        return chain.asReversed()
+    }
+
+    private fun innerCall(expression: UExpression?): UCallExpression? = when (expression) {
+        is UCallExpression -> expression
+        is UQualifiedReferenceExpression -> expression.selector as? UCallExpression
+        is UParenthesizedExpression -> innerCall(expression.expression)
+        else -> null
+    }
+
+    /** 안쪽 호출 끝과 바깥 호출 끝 사이에 줄바꿈이 없는지 */
+    private fun onSameLine(inner: UCallExpression, outer: UCallExpression): Boolean {
+        val innerEnd = inner.sourcePsi?.textRange?.endOffset ?: return false
+        val outerPsi = outer.sourcePsi ?: return false
+        val outerEnd = outerPsi.textRange.endOffset
+        if (innerEnd > outerEnd) return false
+        return !StringUtil.containsLineBreak(outerPsi.containingFile.viewProvider.contents.subSequence(innerEnd, outerEnd))
     }
 
     /** 메서드 선언의 원문(하이라이팅/원본 위치 포함). 읽기 작업 안에서 호출. */

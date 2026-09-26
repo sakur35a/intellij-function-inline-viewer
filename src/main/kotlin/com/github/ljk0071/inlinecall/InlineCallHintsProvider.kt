@@ -21,6 +21,9 @@ class InlineCallHintsProvider : InlayHintsProvider {
     companion object {
         const val PROVIDER_ID: String = "inline.call.body"
 
+        /** 선언형 힌트의 text() 한 조각 최대 길이 */
+        private const val MAX_TEXT_LENGTH = 30
+
         private val FORMAT = HintFormat.default.withColorKind(HintColorKind.TextWithoutBackground)
     }
 
@@ -29,14 +32,14 @@ class InlineCallHintsProvider : InlayHintsProvider {
     private class Collector(private val editor: Editor) : SharedBypassCollector {
         override fun collectFromElement(element: PsiElement, sink: InlayTreeSink) {
             val call = CallTargets.toCall(element) ?: return
-            val method = CallTargets.resolveProjectMethod(call) ?: return
-            val (name, params) = CallTargets.signatureOf(method)
+            val methods = CallTargets.hintTargets(call) ?: return
+            val label = CallTargets.labelOf(methods)
             val offset = element.textRange.endOffset
             val state = if (ExpandedCalls.isExpanded(editor, offset)) CollapseState.Expanded else CollapseState.Collapsed
 
             sink.addPresentation(
                 InlineInlayPosition(offset, relatedToPrevious = true),
-                tooltip = "Click to show/hide the body of $name",
+                tooltip = "Click to show/hide the body of ${methods.joinToString { it.name }}",
                 hintFormat = FORMAT,
             ) {
                 // 목록 전체를 toggleButton 으로 감싸서 힌트 어디를 클릭해도 ▶/▼ 가 바뀌게 한다.
@@ -45,15 +48,13 @@ class InlineCallHintsProvider : InlayHintsProvider {
                     expandedState = {
                         toggleButton {
                             text("▼ ")
-                            text(name)
-                            text(params)
+                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
                         }
                     },
                     collapsedState = {
                         toggleButton {
                             text("▶ ")
-                            text(name)
-                            text(params)
+                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
                         }
                     },
                 )
