@@ -28,6 +28,11 @@ abstract class GitReleaseTask : DefaultTask() {
     @get:Input
     abstract val currentVersion: Property<String>
 
+    /** 버전을 직접 정할 때(-PreleaseVersion=X.Y.Z). 없으면 [currentVersion] 에서 -SNAPSHOT 을 뗀 버전 */
+    @get:Input
+    @get:Optional
+    abstract val requestedVersion: Property<String>
+
     @get:Internal
     abstract val repositoryDir: DirectoryProperty
 
@@ -46,13 +51,20 @@ abstract class GitReleaseTask : DefaultTask() {
     @TaskAction
     fun release() {
         check(git("status", "--porcelain").isEmpty()) { "커밋하지 않은 변경이 있습니다. 커밋하거나 정리한 뒤 릴리스하세요." }
-        val current = currentVersion.get()
-        check(current.endsWith("-SNAPSHOT")) { "직전 릴리스($current) 이후 릴리스할 커밋이 없습니다." }
-        val tag = "v" + current.removeSuffix("-SNAPSHOT")
+        val requested = requestedVersion.orNull
+        val tag = if (requested != null) {
+            check(Regex("""\d+\.\d+\.\d+""").matches(requested)) { "releaseVersion 은 X.Y.Z 형식이어야 합니다: $requested" }
+            "v$requested"
+        } else {
+            val current = currentVersion.get()
+            check(current.endsWith("-SNAPSHOT")) { "직전 릴리스($current) 이후 릴리스할 커밋이 없습니다." }
+            "v" + current.removeSuffix("-SNAPSHOT")
+        }
+        check(git("tag", "--list", tag).isEmpty()) { "태그 $tag 가 이미 있습니다." }
 
         val previousTag = git("describe", "--tags", "--abbrev=0", "--match", "v*", ignoreExitValue = true)
-        val range = if (previousTag.isEmpty()) "HEAD" else "$previousTag..HEAD"
-        val changes = git("log", "--format=- %s", range)
+        // 첫 릴리스는 모든 커밋을 늘어놓지 않고 첫 릴리스라고만 적는다(change-notes 와 같은 규칙).
+        val changes = if (previousTag.isEmpty()) "Initial release." else git("log", "--format=- %s", "$previousTag..HEAD")
         git("commit", "--allow-empty", "-m", "release: $tag\n\n$changes")
         git("tag", "-a", tag, "-m", "release: $tag")
         logger.lifecycle("Released $tag (${if (previousTag.isEmpty()) "first release" else "since $previousTag"}).")
@@ -80,6 +92,7 @@ tasks.register<GitReleaseTask>("release-push") {
     group = "versioning"
     description = "Creates the release commit and vX.Y.Z tag with the git command (honors commit signing) and pushes them."
     currentVersion = semver.version
+    requestedVersion = providers.gradleProperty("releaseVersion")
     repositoryDir = layout.projectDirectory
     outputs.upToDateWhen { false }
 }
@@ -117,19 +130,23 @@ kotlin {
 /**
  * Marketplace 의 change-notes. 직전 릴리스 태그 이후의 Conventional Commits 중 feat/fix/perf 를 모은다.
  * HEAD^ 기준으로 태그를 찾으므로, 릴리스 커밋(태그가 달린 HEAD)에서 빌드해도 그 릴리스의 변경이 나온다.
+ * 직전 태그가 없으면(첫 릴리스) "Initial release." 로 적는다.
  */
 val gitChangeNotes: Provider<String> = run {
     val releaseVersion = version.toString()
+    // 람다가 스크립트 객체를 붙잡지 않도록(설정 캐시) 지역 값으로 둔다.
+    val firstRelease = "\u0000first release"
     val previousTag = providers.exec {
         commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD^")
         isIgnoreExitValue = true
     }.standardOutput.asText.map { it.trim() }
-    val subjects = previousTag.flatMap { tag ->
-        providers.exec {
-            commandLine(listOf("git", "log", "--format=%s") + if (tag.isEmpty()) listOf("HEAD") else listOf("$tag..HEAD"))
-        }.standardOutput.asText
+    // 첫 릴리스면 커밋을 읽지 않고 firstRelease 표시만 넘긴다.
+    val subjects: Provider<String> = previousTag.flatMap { tag ->
+        if (tag.isEmpty()) providers.provider { firstRelease }
+        else providers.exec { commandLine("git", "log", "--format=%s", "$tag..HEAD") }.standardOutput.asText
     }
     subjects.map { log ->
+        if (log == firstRelease) return@map "<b>$releaseVersion</b><br/><ul><li>Initial release.</li></ul>"
         val sections = linkedMapOf("feat" to "New", "fix" to "Fixed", "perf" to "Performance")
         val pattern = Regex("""^(\w+)(?:\([^)]*\))?!?:\s*(.+)$""")
         val byType = log.lines().mapNotNull { pattern.find(it.trim()) }

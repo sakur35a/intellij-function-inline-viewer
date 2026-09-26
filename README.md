@@ -57,9 +57,11 @@ the previous release tag, so `plugin.xml` has no `<change-notes>`.
 ./gradlew printVersion      # version of the current checkout
 ./gradlew printChangeLog    # changes since the last release
 ./gradlew release-push      # "release: vX.Y.Z" commit + vX.Y.Z tag, then git push --follow-tags
+./gradlew release-push -PreleaseVersion=2.0.0   # release a chosen version instead of the computed one
 ```
 
-`release-push` refuses to run with uncommitted changes or when nothing changed since the last release. It runs the `git`
+`release-push` refuses to run with uncommitted changes, when nothing changed since the last release, or when the tag
+already exists. The first release (no earlier tag) is described as "Initial release." in the commit and the change notes. It runs the `git`
 command, so commit signing (`commit.gpgsign`) works through gpg-agent. The plugin's own
 `releaseVersion` commits through JGit, which cannot use gpg-agent and fails when commits are signed.
 
