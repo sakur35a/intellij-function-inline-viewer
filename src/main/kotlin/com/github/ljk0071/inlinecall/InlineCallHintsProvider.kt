@@ -32,7 +32,9 @@ class InlineCallHintsProvider : InlayHintsProvider {
     private class Collector(private val editor: Editor) : SharedBypassCollector {
         override fun collectFromElement(element: PsiElement, sink: InlayTreeSink) {
             val call = CallTargets.toCall(element) ?: return
-            val methods = CallTargets.hintTargets(call) ?: return
+            val methods = Perf.measure("collect.call", thresholdMs = 2.0, detail = { "file=${element.containingFile.name} offset=${element.textRange.endOffset}" }) {
+                CallTargets.hintTargets(call)
+            } ?: return
             val label = CallTargets.labelOf(methods)
             val offset = element.textRange.endOffset
             val state = if (ExpandedCalls.isExpanded(editor, offset)) CollapseState.Expanded else CollapseState.Collapsed

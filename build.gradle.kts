@@ -43,7 +43,19 @@ intellijPlatform {
 
 tasks {
     runIde {
-        // 샌드박스 IDE가 뜨면 sample 프로젝트를 바로 연다.
-        args(layout.projectDirectory.dir("sample").asFile.absolutePath)
+        // 샌드박스 IDE가 뜨면 sample 프로젝트를 연다. -PopenProject=<경로> 로 다른 프로젝트(성능 측정용)를 열 수 있다.
+        val openProject = providers.gradleProperty("openProject")
+            .orElse(layout.projectDirectory.dir("sample").asFile.absolutePath)
+        argumentProviders += CommandLineArgumentProvider { listOf(openProject.get()) }
+
+        // -Pperf: 성능 측정 모드. perf 디버그 로그를 켜고 JFR(CPU 프로파일)을 build/perf/ 에 남긴다.
+        if (providers.gradleProperty("perf").isPresent) {
+            val perfDir = layout.buildDirectory.dir("perf").get().asFile
+            perfDir.mkdirs()
+            jvmArgs(
+                "-Didea.log.debug.categories=#com.github.ljk0071.inlinecall.perf",
+                "-XX:StartFlightRecording=filename=${perfDir.absolutePath}/runIde.jfr,settings=profile,dumponexit=true",
+            )
+        }
     }
 }

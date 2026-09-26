@@ -9,6 +9,7 @@ import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiNamedElement
 import com.intellij.psi.search.GlobalSearchScope
 import com.intellij.psi.search.searches.OverridingMethodsSearch
 import com.intellij.util.Processor
@@ -81,7 +82,12 @@ class FunctionBody(
          * [declaration] 의 원문을 렉서 하이라이팅과 함께 줄 단위 토큰으로 만든다. 읽기 작업 안에서 호출.
          * 앞쪽 문서 주석(Javadoc/KDoc)은 빼고, 선언부 들여쓰기만큼 공통 들여쓰기를 제거한다.
          */
-        fun of(declaration: PsiElement): FunctionBody? {
+        fun of(declaration: PsiElement): FunctionBody? =
+            Perf.measure("body", detail = { "name=${(declaration as? PsiNamedElement)?.name} file=${declaration.containingFile?.name}" }) {
+                build(declaration)
+            }
+
+        private fun build(declaration: PsiElement): FunctionBody? {
             val psiFile = declaration.containingFile ?: return null
             val file = psiFile.virtualFile ?: return null
             val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
@@ -93,10 +99,15 @@ class FunctionBody(
             if (start >= end) return null
 
             val chars = document.immutableCharSequence
-            val highlighter = EditorHighlighterFactory.getInstance().createEditorHighlighter(psiFile.project, file)
-            highlighter.setText(chars)
+            val highlighter = Perf.measure("body.lex", detail = { "file=${psiFile.name} chars=${chars.length}" }) {
+                EditorHighlighterFactory.getInstance().createEditorHighlighter(psiFile.project, file).also { it.setText(chars) }
+            }
 
-            val callEnds = collectCalls(declaration, start, end)
+            val callEnds = Perf.measure("body.calls", detail = { "name=${(declaration as? PsiNamedElement)?.name}" }) {
+                collectCalls(declaration, start, end)
+            }
+            var semanticNanos = 0L
+            var semanticTokens = 0
 
             val labelCounts = HashMap<String, Int>()
             val semanticLineLimit = InlineCallSettings.getInstance().state.maxLines
@@ -123,9 +134,13 @@ class FunctionBody(
                 var trimmed = trimEnd(tokens)
                 // 의미 분석 색은 식별자마다 resolve 가 필요하므로 화면에 보이는 줄(최대 줄 수)까지만 칠한다.
                 if (line - firstLine < semanticLineLimit) {
+                    val semanticStart = System.nanoTime()
                     trimmed = trimmed.map { token ->
-                        if (!token.isNavigable) token else SemanticColors.keyAt(psiFile, token.sourceOffset)?.let(token::withKey) ?: token
+                        if (!token.isNavigable) return@map token
+                        semanticTokens++
+                        SemanticColors.keyAt(psiFile, token.sourceOffset)?.let(token::withKey) ?: token
                     }
+                    semanticNanos += System.nanoTime() - semanticStart
                 }
                 val calls = callEnds.subMap(from + 1, true, lineEnd, true).map { (callEnd, call) ->
                     // 호출식 마지막 글자를 담은 토큰 뒤에 힌트를 붙인다.
@@ -134,6 +149,9 @@ class FunctionBody(
                     BodyCall(index, call.first, call.second, "${call.first}#$ordinal")
                 }
                 BodyLine(trimmed, calls.filter { it.afterToken >= 0 })
+            }
+            if (Perf.enabled) {
+                Perf.log("body.semantic", semanticNanos / 1e6, "name=${(declaration as? PsiNamedElement)?.name} identifiers=$semanticTokens")
             }
             val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
             val method = declaration.toUElementOfType<UMethod>()
@@ -146,8 +164,10 @@ class FunctionBody(
         private fun implementationLines(method: PsiMethod?): List<BodyLine> {
             if (method == null) return listOf(note(InlineCallBundle.message("body.no.body")))
             val found = ArrayList<PsiMethod>()
-            OverridingMethodsSearch.search(method, GlobalSearchScope.projectScope(method.project), true)
-                .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
+            Perf.measure("body.impls", detail = { "name=${method.containingClass?.name}.${method.name} found=${found.size}" }) {
+                OverridingMethodsSearch.search(method, GlobalSearchScope.projectScope(method.project), true)
+                    .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
+            }
             val implementations = found.take(MAX_IMPLEMENTATIONS).filter {
                 CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
             }

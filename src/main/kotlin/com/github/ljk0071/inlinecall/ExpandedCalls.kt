@@ -144,7 +144,10 @@ object ExpandedCalls {
             if (force) forceRequested = true
             val forceNow = forceRequested
             // 입력이 이어지면 이전 계산은 취소되고(coalesce) 마지막 것만 반영된다.
-            ReadAction.nonBlocking<List<Result>> { pending.map { compute(it, forceNow) } }
+            ReadAction.nonBlocking<List<Result>> {
+                Perf.measure("refresh", detail = { "expansions=${pending.size} force=$forceNow" }) { pending.map { compute(it, forceNow) } }
+            }
+                .inSmartMode(project)
                 .withDocumentsCommitted(project)
                 .expireWith(this)
                 .coalesceBy(this)

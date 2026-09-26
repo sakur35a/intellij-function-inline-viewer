@@ -72,11 +72,14 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             return
         }
         val project = editor.project ?: return
+        val start = System.nanoTime()
         ReadAction.nonBlocking<List<FunctionBody>> { call.targets.mapNotNull { it.element?.let(FunctionBody::of) } }
+            .inSmartMode(project)
             .expireWith(project)
             .expireWhen { !inlay.isValid }
             .finishOnUiThread(ModalityState.defaultModalityState()) { bodies ->
                 if (renderer.expand(node, call, bodies)) inlay.update()
+                Perf.since("expand.nested", start, "label=${call.label} depth=${node.depth + 1}")
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
@@ -106,9 +109,12 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
     private fun navigate(editor: Editor, target: (Project) -> Navigatable?) {
         val project = editor.project ?: return
+        val start = System.nanoTime()
         ReadAction.nonBlocking<Navigatable?> { target(project) }
+            .inSmartMode(project)
             .expireWith(project)
             .finishOnUiThread(ModalityState.defaultModalityState()) { target ->
+                Perf.since("navigate", start)
                 if (target != null && target.canNavigate()) target.navigate(true)
             }
             .submit(AppExecutorUtil.getAppExecutorService())
@@ -137,12 +143,15 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         if (ExpandedCalls.collapse(editor, callEndOffset)) return
         val project = editor.project ?: return
 
-        // resolve 는 EDT 를 막지 않도록 백그라운드 읽기 작업으로 수행한다.
+        // resolve 는 EDT 를 막지 않도록 백그라운드 읽기 작업으로 수행한다. 인덱싱 중이면 끝날 때까지 기다린다.
+        val start = System.nanoTime()
         ReadAction.nonBlocking<Expansion?> { findExpansion(editor, callEndOffset) }
+            .inSmartMode(project)
             .withDocumentsCommitted(project)
             .expireWith(project)
             .expireWhen { editor.isDisposed }
             .finishOnUiThread(ModalityState.defaultModalityState()) { expansion ->
+                Perf.since("expand", start, "bodies=${expansion?.bodies?.size ?: 0}")
                 if (expansion == null || ExpandedCalls.isExpanded(editor, callEndOffset)) return@finishOnUiThread
                 ExpandedCalls.expand(editor, expansion.callRange, expansion.bodies, indentPx(editor, expansion.callRange.startOffset))
             }
