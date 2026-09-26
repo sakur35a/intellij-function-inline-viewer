@@ -55,9 +55,13 @@ the previous release tag, so `plugin.xml` has no `<change-notes>`.
 ```bash
 ./gradlew printVersion      # version of the current checkout
 ./gradlew printChangeLog    # changes since the last release
-./gradlew releaseVersion    # "release: vX.Y.Z" commit + vX.Y.Z tag
+./gradlew release           # "release: vX.Y.Z" commit + vX.Y.Z tag
 ./gradlew buildPlugin       # then build the release zip
+git push --follow-tags
 ```
+
+`release` runs the `git` command, so commit signing (`commit.gpgsign`) works through gpg-agent. The plugin's own
+`releaseVersion` commits through JGit, which cannot use gpg-agent and fails when commits are signed.
 
 ## Notes on internal APIs
 

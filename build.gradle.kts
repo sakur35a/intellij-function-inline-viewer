@@ -1,4 +1,6 @@
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+import java.io.ByteArrayOutputStream
+import javax.inject.Inject
 
 plugins {
     id("java")
@@ -8,9 +10,62 @@ plugins {
 }
 
 // 버전은 git 태그(vX.Y.Z)와 그 뒤의 Conventional Commits 로 계산한다(fix: 는 patch, feat: 는 minor, ! / BREAKING CHANGE 는 major).
-// 릴리스는 ./gradlew releaseVersion 으로 "release: vX.Y.Z" 커밋과 vX.Y.Z 태그를 만든다. 그 사이의 빌드는 -SNAPSHOT 이 붙는다.
+// 릴리스는 ./gradlew release 로 "release: vX.Y.Z" 커밋과 vX.Y.Z 태그를 만든다(아래 GitReleaseTask). 그 사이의 빌드는 -SNAPSHOT 이 붙는다.
 semver {
     releaseTagNameFormat = "v%s"
+}
+
+/**
+ * 릴리스 커밋과 태그를 git 명령으로 만든다. 플러그인의 releaseVersion 은 JGit 으로 커밋해서,
+ * commit.gpgsign 이 켜져 있으면 gpg-agent 를 쓰지 못해 서명에 실패한다. git 명령은 사용자의 서명 설정을 그대로 따른다.
+ */
+abstract class GitReleaseTask : DefaultTask() {
+    @get:Inject
+    abstract val exec: ExecOperations
+
+    /** 지금 계산된 버전(릴리스할 변경이 있으면 X.Y.Z-SNAPSHOT) */
+    @get:Input
+    abstract val currentVersion: Property<String>
+
+    @get:Internal
+    abstract val repositoryDir: DirectoryProperty
+
+    private fun git(vararg args: String, ignoreExitValue: Boolean = false): String {
+        val out = ByteArrayOutputStream()
+        val result = exec.exec {
+            workingDir(repositoryDir.get().asFile)
+            commandLine(listOf("git") + args)
+            standardOutput = out
+            errorOutput = ByteArrayOutputStream()
+            isIgnoreExitValue = ignoreExitValue
+        }
+        return if (result.exitValue == 0) out.toString().trim() else ""
+    }
+
+    @TaskAction
+    fun release() {
+        check(git("status", "--porcelain").isEmpty()) { "커밋하지 않은 변경이 있습니다. 커밋하거나 정리한 뒤 릴리스하세요." }
+        val current = currentVersion.get()
+        check(current.endsWith("-SNAPSHOT")) { "직전 릴리스($current) 이후 릴리스할 커밋이 없습니다." }
+        val tag = "v" + current.removeSuffix("-SNAPSHOT")
+
+        val previousTag = git("describe", "--tags", "--abbrev=0", "--match", "v*", ignoreExitValue = true)
+        val range = if (previousTag.isEmpty()) "HEAD" else "$previousTag..HEAD"
+        val changes = git("log", "--format=- %s", range)
+        git("commit", "--allow-empty", "-m", "release: $tag\n\n$changes")
+        git("tag", "-a", tag, "-m", "release: $tag")
+
+        logger.lifecycle("Released $tag (${if (previousTag.isEmpty()) "first release" else "since $previousTag"}).")
+        logger.lifecycle("Next: ./gradlew buildPlugin, then git push --follow-tags")
+    }
+}
+
+tasks.register<GitReleaseTask>("release") {
+    group = "versioning"
+    description = "Creates the release commit and vX.Y.Z tag with the git command (honors commit signing)."
+    currentVersion = semver.version
+    repositoryDir = layout.projectDirectory
+    outputs.upToDateWhen { false }
 }
 
 group = providers.gradleProperty("pluginGroup").get()
