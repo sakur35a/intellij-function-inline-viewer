@@ -82,7 +82,9 @@ object CallTargets {
      */
     private fun ownDeclaration(method: PsiMethod): PsiElement? {
         val uMethod = method.toUElementOfType<UMethod>()
-        val source = uMethod?.sourcePsi?.takeIf { it.isPhysical && it.textRange != null }
+        // textRange 는 보지 않는다: 스텁 상태의 Kotlin 선언에서 부르면 대상 파일 구문 트리 전체를 로드한다(힌트 수집 비용의 1/4).
+        // 합성(light) 요소는 isPhysical 이 false 라서 이것만으로 걸러진다.
+        val source = uMethod?.sourcePsi?.takeIf { it.isPhysical }
         if (source != null) {
             // Kotlin 플러그인이 없을 때 클래스를 로드하지 않도록 이름으로 비교한다.
             when {
@@ -100,7 +102,7 @@ object CallTargets {
         val params = method.parameterList.parametersCount
         val synthetic = (method.name == "values" && params == 0) || (method.name == "valueOf" && params == 1)
         if (!synthetic) return null
-        return enumClass.toUElementOfType<UClass>()?.sourcePsi?.takeIf { it.isPhysical && it.textRange != null }
+        return enumClass.toUElementOfType<UClass>()?.sourcePsi?.takeIf { it.isPhysical }
     }
 
     private const val KT_NAMED_FUNCTION = "org.jetbrains.kotlin.psi.KtNamedFunction"
