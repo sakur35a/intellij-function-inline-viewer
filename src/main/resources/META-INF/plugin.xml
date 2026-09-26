@@ -20,7 +20,7 @@
       <li><b>Method chains</b> such as <code>a.foo().bar()</code> are merged into a single hint.
           Several calls on one line get different colors (configurable in the color scheme).</li>
       <li><b>Stays fresh</b> &mdash; unfolded bodies update while you edit the caller or the callee, and are
-          restored when you reopen the project.</li>
+          restored when you reopen the project. Fold all with Ctrl+Cmd+- (macOS) / Ctrl+Alt+-.</li>
       <li>Only <b>project sources</b> get hints; library and JDK calls are ignored.</li>
       <li>Works with <b>Java</b> and <b>Kotlin</b> (including extension functions, lambdas and custom
           property accessors).</li>
@@ -68,4 +68,16 @@
                 bundle="messages.InlineCallBundle"
                 key="settings.display.name"/>
     </extensions>
+
+    <actions>
+        <action id="functioninlineviewer.CollapseAllBodies"
+                class="com.github.sakur35a.functioninlineviewer.CollapseAllBodiesAction"
+                text="Fold All Unfolded Function Bodies"
+                description="Folds every function body unfolded below a call in the editor">
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt MINUS"/>
+            <keyboard-shortcut keymap="Mac OS X" first-keystroke="control meta MINUS"/>
+            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="control meta MINUS"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+    </actions>
 </idea-plugin>

@@ -46,6 +46,14 @@ intellijPlatform {
     }
 
     pluginVerification {
+        // 내부 API 사용은 DeclarativeHint.kt 에 모아 둔 의도된 것이라(README 참고) 실패로 치지 않고 리포트로만 본다.
+        // 호환성 문제, 누락된 의존성 등은 계속 실패로 잡는다.
+        failureLevel = listOf(
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.MISSING_DEPENDENCIES,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.NOT_DYNAMIC,
+        )
         ides {
             // 지원하는 최소 버전(sinceBuild)과 같은 IntelliJ IDEA Ultimate 로 검증한다.
             create("IU", providers.gradleProperty("platformVersion"))

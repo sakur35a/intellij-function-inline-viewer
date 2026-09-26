@@ -38,6 +38,20 @@ object ExpandedCalls {
     fun collapse(editor: Editor, callEndOffset: Int): Boolean =
         editor.getUserData(KEY)?.collapse(callEndOffset) == true
 
+    /**
+     * EDT 전용. 에디터의 펼친 본문을 모두 접고, 호출부 힌트의 화살표도 ▶ 로 돌린다. 접은 본문이 있었으면 true.
+     * (본문만 접으면 힌트는 ▼ 로 남고, 다시 그려질 때 본문이 다시 펼쳐진다.)
+     */
+    fun collapseAll(editor: Editor): Boolean {
+        val expansions = editor.getUserData(KEY)
+        val any = expansions != null && expansions.size > 0
+        expansions?.collapseAll()
+        for (inlay in editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength)) {
+            if (DeclarativeHint.isOurs(inlay)) DeclarativeHint.collapseArrow(inlay)
+        }
+        return any
+    }
+
     /** EDT 전용. */
     fun expand(editor: Editor, callRange: TextRange, bodies: List<FunctionBody>, indentPx: Int) {
         if (bodies.isEmpty() || editor.isDisposed) return
@@ -88,6 +102,10 @@ object ExpandedCalls {
             val marker = entries.keys.firstOrNull { it.isValid && it.endOffset == callEndOffset } ?: return false
             remove(marker)
             return true
+        }
+
+        fun collapseAll() {
+            entries.keys.toList().forEach(::remove)
         }
 
         fun expand(callRange: TextRange, bodies: List<FunctionBody>, indentPx: Int) {

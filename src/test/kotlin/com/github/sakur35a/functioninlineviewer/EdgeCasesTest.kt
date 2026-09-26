@@ -741,6 +741,29 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertEquals(1, ExpandedCalls.markerCount(editor))
     }
 
+    /** 일괄 접기: 모든 본문이 접히고 힌트 화살표도 ▶ 로 돌아온다(다시 그려져도 본문이 되살아나지 않는다). */
+    fun testCollapseAllResetsBodiesAndArrows() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n    int w = helper();\n}\n")
+        myFixture.doHighlighting()
+        val editor = myFixture.editor
+        for (hint in editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength).filter { DeclarativeHint.isOurs(it) }) {
+            val bounds = hint.bounds!!
+            val middle = hint.widthInPixels / 2
+            val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + middle, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
+            (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA), Point(middle, 2), false)
+            HintToggle.syncWithHint(editor, hint, toggleIfUnknown = false)
+            waitForExpansion()
+        }
+        assertEquals(2, ExpandedCalls.markerCount(editor))
+
+        assertTrue(ExpandedCalls.collapseAll(editor))
+        waitForExpansion()
+        assertEquals(0, ExpandedCalls.markerCount(editor))
+        val hints = editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength).filter { DeclarativeHint.isOurs(it) }
+        assertEquals(listOf(false, false), hints.map { DeclarativeHint.isExpanded(it) })
+        assertFalse(ExpandedCalls.collapseAll(editor))
+    }
+
     fun testDeletedCallRemovesInlayAndMarker() {
         myFixture.configureByText(
             "A.java",

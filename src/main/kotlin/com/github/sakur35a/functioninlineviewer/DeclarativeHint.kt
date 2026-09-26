@@ -39,6 +39,35 @@ object DeclarativeHint {
         null
     }
 
+    /** toggleTreeState(byte) 는 internal 이라 이름이 변형되어 있다. 플랫폼 클릭 처리와 같은 호출을 리플렉션으로 한다. */
+    private val toggleTreeState: Method? by lazy {
+        InlayPresentationList::class.java.methods.firstOrNull { it.name.startsWith("toggleTreeState") && it.parameterCount == 1 }
+    }
+
+    /**
+     * 화살표가 ▼ 이면 플랫폼이 클릭했을 때와 똑같이 ▶ 로 돌린다(본문을 일괄로 접을 때 화살표를 맞춘다). EDT 전용.
+     * 돌리지 못하면(구조 변경 등) false.
+     */
+    fun collapseArrow(inlay: Inlay<*>): Boolean = try {
+        val renderer = inlay.renderer as? DeclarativeInlayRendererBase<*>
+        val toggle = toggleTreeState
+        val list = renderer?.presentationLists?.firstOrNull()
+        val entry = list?.let { l ->
+            (getEntries?.invoke(l) as? Array<*>)?.filterIsInstance<TextInlayPresentationEntry>()?.firstOrNull()
+        }
+        if (renderer == null || toggle == null || list == null || entry == null || isExpanded(inlay) != true) {
+            false
+        } else {
+            toggle.invoke(list, entry.parentIndexToSwitch)
+            inlay.update()
+            true
+        }
+    } catch (_: LinkageError) {
+        false
+    } catch (_: ReflectiveOperationException) {
+        false
+    }
+
     /** ▼ 이면 true, ▶ 이면 false. 읽을 수 없으면(IDE 버전에 따른 구조 변경 등) null. */
     fun isExpanded(inlay: Inlay<*>): Boolean? = try {
         val renderer = inlay.renderer as? DeclarativeInlayRendererBase<*>

@@ -15,6 +15,7 @@ defined in your project. Click it and the function's body unfolds right below th
 - **Method chains** `a.foo().bar()` on one line collapse into one hint; multiple calls on a line get distinct colors
   (Settings > Editor > Color Scheme > Function Inline Viewer).
 - **Kotlin** – top-level and extension functions, lambdas, and property access with custom `get()`/`set()`.
+- **Fold everything** – `Ctrl+Cmd+-` (macOS) / `Ctrl+Alt+-` folds every unfolded body in the editor (also in the editor's context menu).
 - **Live** – unfolded bodies refresh when you edit the caller or the callee and are restored after a restart.
 
 ## Requirements
@@ -37,6 +38,12 @@ the hint can be toggled under **Settings > Editor > Inlay Hints > Other**.
 
 Performance measurement: `./gradlew runIde -Pperf -PopenProject=<path>` records `perf` debug logs and a JFR file under
 `build/perf/`; summarize the log with `scripts/perf-summary.py`.
+
+## Verification
+
+`./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2. Internal API usage is reported but does not fail
+the task (see below). One compatibility warning about `supportsKotlinPluginMode` is expected: the declaration lives in the
+optional `inline-call-kotlin.xml`, which the verifier does not merge.
 
 ## Notes on internal APIs
 
