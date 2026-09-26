@@ -162,5 +162,11 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             }
         }.get()
         assertEquals(listOf("val fahrenheit: Double", "    get() = celsius * 9 / 5 + 32"), bodies.single().lines.map { it.text })
+        val names = ApplicationManager.getApplication().executeOnPooledThread<List<String>> {
+            ReadAction.compute<List<String>, RuntimeException> {
+                CallTargets.hintAt(myFixture.file, end)!!.names.map { it.substring(myFixture.editor.document.text) }
+            }
+        }.get()
+        assertEquals(listOf("fahrenheit"), names)
     }
 }

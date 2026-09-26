@@ -135,14 +135,21 @@ object CallTargets {
     fun hintTargets(
         call: UCallExpression,
         mergeChains: Boolean = InlineCallSettings.getInstance().state.mergeChains,
-    ): List<PsiMethod>? {
-        if (!mergeChains) return resolveProjectMethod(call)?.let(::listOf)
+    ): List<PsiMethod>? = hintCalls(call, mergeChains)?.map { it.second }
+
+    /** [hintTargets] 와 같되, 각 대상 메서드를 부른 호출식도 함께(이름 위치를 칠하거나 강조할 때 쓴다). */
+    private fun hintCalls(
+        call: UCallExpression,
+        mergeChains: Boolean = InlineCallSettings.getInstance().state.mergeChains,
+    ): List<Pair<UCallExpression, PsiMethod>>? {
+        if (!mergeChains) return resolveProjectMethod(call)?.let { listOf(call to it) }
         if (outerChainCall(call) != null) return null
-        return sameLineChain(call).mapNotNull(::resolveProjectMethod).ifEmpty { null }
+        return sameLineChain(call).mapNotNull { c -> resolveProjectMethod(c)?.let { c to it } }.ifEmpty { null }
     }
 
     /** 힌트 하나: 붙는 위치(호출식/참조 범위, 끝에 붙는다), 펼칠 대상 메서드들, 라벨 */
-    data class Hint(val range: TextRange, val methods: List<PsiMethod>, val label: String)
+    /** [names] 는 호출된 함수(프로퍼티) 이름들의 위치. 무지개 색과 마우스 오버 강조에 쓴다. */
+    data class Hint(val range: TextRange, val methods: List<PsiMethod>, val label: String, val names: List<TextRange> = emptyList())
 
     /**
      * [element] 에 붙일 힌트. 읽기 작업 안에서 호출.
@@ -151,8 +158,10 @@ object CallTargets {
     fun hintFor(element: PsiElement): Hint? {
         val call = toCall(element)
         if (call != null) {
-            val methods = hintTargets(call) ?: return null
-            return Hint(element.textRange, methods, labelOf(methods))
+            val calls = hintCalls(call) ?: return null
+            val methods = calls.map { it.second }
+            val names = calls.mapNotNull { it.first.methodIdentifier?.sourcePsi?.textRange }
+            return Hint(element.textRange, methods, labelOf(methods), names)
         }
         // Kotlin 플러그인이 없을 때 Kotlin 클래스를 로드하지 않도록 이름으로 먼저 거른다.
         if (element.javaClass.name == KT_NAME_REFERENCE) return KotlinPropertyAccess.hint(element)

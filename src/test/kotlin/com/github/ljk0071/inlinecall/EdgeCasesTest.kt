@@ -221,6 +221,16 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         )
     }
 
+    /** 힌트가 가리키는 호출된 이름 위치(마우스 오버 강조용). 합친 체인은 체인 안의 프로젝트 함수 이름 모두. */
+    fun testHintNamesPointAtCalledNames() {
+        myFixture.addFileToProject("demo/B.java", chainClass)
+        myFixture.configureByText("Main.java", "package demo;\nclass Main {\n    void run(B b) { b.foo().name().trim(); }\n}\n")
+        val text = myFixture.editor.document.text
+        val end = text.indexOf("trim()") + "trim()".length
+        val hint = CallTargets.hintAt(myFixture.file, end)!!
+        assertEquals(listOf("foo", "name"), hint.names.map { it.substring(text) })
+    }
+
     fun testChainMergeCanBeDisabled() {
         InlineCallSettings.getInstance().state.mergeChains = false
         myFixture.addFileToProject("demo/B.java", chainClass)

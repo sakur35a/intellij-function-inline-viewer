@@ -46,7 +46,7 @@ internal object KotlinPropertyAccess {
         val accessors = LightClassUtil.getLightClassPropertyMethods(property)
         val method = (if (write) accessors.setter else accessors.getter) ?: return null
         if (!CallTargets.isProjectDeclaration(method)) return null
-        return CallTargets.Hint(reference.textRange, listOf(method), if (write) "set $name" else name)
+        return CallTargets.Hint(reference.textRange, listOf(method), if (write) "set $name" else name, listOf(reference.textRange))
     }
 
     /** `x.p = v`, `p += v` 처럼 대입의 왼쪽이면 setter 로 본다. */

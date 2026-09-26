@@ -4,6 +4,7 @@ import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.highlighter.EditorHighlighterFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDocumentManager
@@ -58,6 +59,8 @@ class BodyCall(
     val key: String,
     /** true 면 대상 본문 대신 대상 메서드의 재정의 목록을 펼친다(클릭할 때 검색). */
     val searchesOverrides: Boolean = false,
+    /** 한 줄에 호출이 여럿일 때 무지개 색 번호(힌트와 호출된 이름을 같은 색으로 칠한다). 하나뿐이면 null. */
+    val color: Int? = null,
 ) {
     /** 이 힌트를 펼쳤을 때 보여줄 본문. 읽기 작업 안에서 호출. */
     fun load(target: PsiElement): FunctionBody? =
@@ -65,7 +68,13 @@ class BodyCall(
 }
 
 /** [nestedOnly] 면 더 펼칠 수 없는 깊이(최대 깊이)에서는 줄 자체를 숨긴다(구현체 목록처럼 힌트만 있는 줄). */
-class BodyLine(val tokens: List<BodyToken>, val calls: List<BodyCall> = emptyList(), val nestedOnly: Boolean = false) {
+class BodyLine(
+    val tokens: List<BodyToken>,
+    val calls: List<BodyCall> = emptyList(),
+    val nestedOnly: Boolean = false,
+    /** 토큰 번호 -> 무지개 색 번호. 호출된 함수 이름 토큰을 그 호출의 힌트와 같은 색으로 칠한다. */
+    val tokenColors: Map<Int, Int> = emptyMap(),
+) {
     val text: String get() = tokens.joinToString("") { it.text }
 }
 
@@ -194,13 +203,20 @@ class FunctionBody(
                 }
                 // 빈 줄은 from == lineEnd 라 범위가 뒤집히므로 건너뛴다.
                 val lineCalls = if (from < lineEnd) callEnds.subMap(from + 1, true, lineEnd, true) else emptyMap()
-                val calls = lineCalls.map { (callEnd, call) ->
+                // 한 줄에 호출이 여럿이면 호출마다 다른 색(무지개)으로, 힌트와 호출된 이름을 같은 색으로 칠한다.
+                val rainbow = lineCalls.size >= 2
+                val tokenColors = HashMap<Int, Int>()
+                val calls = lineCalls.entries.mapIndexed { order, (callEnd, call) ->
                     // 호출식 마지막 글자를 담은 토큰 뒤에 힌트를 붙인다.
                     val index = trimmed.indexOfLast { token -> token.sourceOffset < callEnd }
-                    val ordinal = labelCounts.merge(call.first, 1, Int::plus)
-                    BodyCall(index, call.first, call.second, "${call.first}#$ordinal")
+                    val ordinal = labelCounts.merge(call.label, 1, Int::plus)
+                    val color = if (rainbow) order else null
+                    if (color != null) {
+                        trimmed.forEachIndexed { i, token -> if (call.names.any { token.sourceOffset in it.startOffset until it.endOffset }) tokenColors[i] = color }
+                    }
+                    BodyCall(index, call.label, call.targets, "${call.label}#$ordinal", color = color)
                 }
-                BodyLine(trimmed, calls.filter { it.afterToken >= 0 })
+                BodyLine(trimmed, calls.filter { it.afterToken >= 0 }, tokenColors = tokenColors)
             }
             if (Perf.enabled) {
                 Perf.log("body.semantic", semanticNanos / 1e6, "name=${(declaration as? PsiNamedElement)?.name} identifiers=$semanticTokens")
@@ -308,20 +324,25 @@ class FunctionBody(
         /** "all" 로 불러올 때의 상한(계층이 비정상적으로 큰 경우 대비) */
         const val ALL_RESULTS = 10_000
 
-        /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> (라벨, 대상 선언들). 힌트 규칙은 에디터 힌트와 같다. */
+        private class FoundCall(val label: String, val targets: List<SmartPsiElementPointer<PsiElement>>, val names: List<TextRange>)
+
+        /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> 호출. 힌트 규칙은 에디터 힌트와 같다. */
         private fun collectCalls(
             declaration: PsiElement,
             start: Int,
             end: Int,
-        ): TreeMap<Int, Pair<String, List<SmartPsiElementPointer<PsiElement>>>> {
+        ): TreeMap<Int, FoundCall> {
             val pointers = SmartPointerManager.getInstance(declaration.project)
-            val result = TreeMap<Int, Pair<String, List<SmartPsiElementPointer<PsiElement>>>>()
+            val result = TreeMap<Int, FoundCall>()
             for (element in SyntaxTraverser.psiTraverser(declaration)) {
                 val callEnd = element.textRange.endOffset
                 if (callEnd <= start || callEnd > end) continue
                 val hint = CallTargets.hintFor(element) ?: continue
-                result[callEnd] = hint.label to
-                    hint.methods.map { pointers.createSmartPsiElementPointer(CallTargets.declarationOf(it)) }
+                result[callEnd] = FoundCall(
+                    hint.label,
+                    hint.methods.map { pointers.createSmartPsiElementPointer(CallTargets.declarationOf(it)) },
+                    hint.names,
+                )
             }
             return result
         }

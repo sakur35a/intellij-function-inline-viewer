@@ -1,5 +1,6 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeHighlighting.RainbowHighlighter
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
@@ -60,6 +61,11 @@ class FunctionBodyRenderer(
     companion object {
         const val DEFAULT_MAX_LINES = 30
 
+        private val FALLBACK_RAINBOW = listOf(
+            JBColor(0x9B3B6A, 0xE8BA36), JBColor(0x114D77, 0x54A857), JBColor(0xBC8650, 0x359FF4),
+            JBColor(0x005910, 0x6E7ED9), JBColor(0xBC5150, 0x179FFF),
+        )
+
         /** 최상위 본문이 depth 0. 이 깊이의 본문에는 더 펼칠 힌트를 그리지 않는다. */
         const val DEFAULT_MAX_DEPTH = 4
     }
@@ -91,7 +97,8 @@ class FunctionBodyRenderer(
         val x: Int
         val width: Int
 
-        class Text(val token: BodyToken, val attrs: TextAttributes?, override val x: Int, override val width: Int) : Piece
+        /** [rainbow] 는 같은 줄의 다른 호출과 구분하는 무지개 색 번호(호출된 이름 토큰 / 그 힌트) */
+        class Text(val token: BodyToken, val attrs: TextAttributes?, override val x: Int, override val width: Int, val rainbow: Int? = null) : Piece
         class Hint(val call: BodyCall, val text: String, override val x: Int, override val width: Int) : Piece
         class Label(val text: String, override val x: Int, override val width: Int) : Piece
         class Action(val action: MoreAction, val text: String, override val x: Int, override val width: Int) : Piece
@@ -272,7 +279,7 @@ class FunctionBodyRenderer(
         line.tokens.forEachIndexed { index, token ->
             val attrs = attributes(editor, token)
             val width = editor.contentComponent.getFontMetrics(font(editor, attrs)).stringWidth(token.text)
-            pieces += Piece.Text(token, attrs, x, width)
+            pieces += Piece.Text(token, attrs, x, width, line.tokenColors[index])
             x += width
             if (!showHints) return@forEachIndexed
             for (call in line.calls) {
@@ -360,11 +367,11 @@ class FunctionBodyRenderer(
                 when (piece) {
                     is Piece.Text -> {
                         g.font = font(editor, piece.attrs)
-                        g.color = piece.attrs?.foregroundColor ?: scheme.defaultForeground
+                        g.color = piece.rainbow?.let { rainbowColor(editor, it) } ?: piece.attrs?.foregroundColor ?: scheme.defaultForeground
                         g.drawString(piece.token.text, piece.x, baseline)
                         if (piece.token === hovered) g.fillRect(piece.x, baseline + JBUI.scale(1), piece.width, JBUI.scale(1))
                     }
-                    is Piece.Hint -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline)
+                    is Piece.Hint -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline, piece.call.color?.let { rainbowColor(editor, it) })
                     is Piece.Action -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline)
                     is Piece.Label -> {
                         g.font = font(editor, null)
@@ -377,17 +384,24 @@ class FunctionBodyRenderer(
     }
 
     /** 클릭할 수 있는 조각(본문 안 ▶ 힌트, 더 보기 버튼)은 인레이 힌트처럼 둥근 배경 위에 그린다. */
-    private fun drawPill(g: Graphics2D, editor: Editor, text: String, x: Int, width: Int, rowY: Int, baseline: Int) {
+    /** [accent] 가 있으면(무지개 색) 배경에 살짝 섞고 글자를 그 색으로 그린다. */
+    private fun drawPill(g: Graphics2D, editor: Editor, text: String, x: Int, width: Int, rowY: Int, baseline: Int, accent: Color? = null) {
         val hintAttrs = hintAttributes(editor)
         val lineHeight = editor.lineHeight
-        hintAttrs?.backgroundColor?.let {
-            g.color = it
-            val arc = JBUI.scale(6)
-            g.fillRoundRect(x, rowY + JBUI.scale(1), width, lineHeight - JBUI.scale(2), arc, arc)
-        }
+        val background = hintAttrs?.backgroundColor ?: editor.colorsScheme.defaultBackground
+        g.color = if (accent != null) ColorUtil.mix(background, accent, 0.25) else background
+        val arc = JBUI.scale(6)
+        g.fillRoundRect(x, rowY + JBUI.scale(1), width, lineHeight - JBUI.scale(2), arc, arc)
         g.font = font(editor, null)
-        g.color = hintAttrs?.foregroundColor ?: JBColor.GRAY
+        g.color = accent ?: hintAttrs?.foregroundColor ?: JBColor.GRAY
         g.drawString(text, x + hintPadding, baseline)
+    }
+
+    /** 컬러 스킴의 무지개 색(Rainbow 설정과 같은 색). 스킴에 없으면 기본 팔레트. */
+    private fun rainbowColor(editor: Editor, index: Int): Color {
+        val keys = RainbowHighlighter.RAINBOW_COLOR_KEYS
+        return editor.colorsScheme.getAttributes(keys[index % keys.size])?.foregroundColor
+            ?: FALLBACK_RAINBOW[index % FALLBACK_RAINBOW.size]
     }
 
     /** [point](에디터 content 좌표) 아래의 토큰 또는 호출 힌트. 없으면 null. */

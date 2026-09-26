@@ -175,4 +175,34 @@ class FunctionBodyTest : BasePlatformTestCase() {
         )
         assertEquals(listOf("helper(x)", "helper(x)"), body.calls.map { it.label }.toList())
     }
+
+    /** 한 줄에 호출이 여럿이면 호출마다 다른 색 번호를 주고, 호출된 이름 토큰에도 같은 번호를 준다. */
+    fun testRainbowColorsForCallsOnSameLine() {
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                int add(int a, int b) { return a + b; }
+                int mul(int a, int b) { return a * b; }
+                int caller() {
+                    int x = add(1, 2);
+                    return add(mul(1, 2), 3);
+                }
+            }
+            """.trimIndent(),
+        )
+        val body = CallTargets.body(javaMethod("caller"))!!
+        val single = body.lines[1]
+        assertNull(single.calls.single().color)
+        assertTrue(single.tokenColors.isEmpty())
+
+        val line = body.lines[2]
+        val mul = line.calls.single { it.label.startsWith("mul") }
+        val add = line.calls.single { it.label.startsWith("add") }
+        assertEquals(0, mul.color) // 먼저 끝나는 호출부터 번호를 매긴다
+        assertEquals(1, add.color)
+        val colorOf = { name: String -> line.tokenColors[line.tokens.indexOfFirst { it.text == name }] }
+        assertEquals(mul.color, colorOf("mul"))
+        assertEquals(add.color, colorOf("add"))
+    }
 }

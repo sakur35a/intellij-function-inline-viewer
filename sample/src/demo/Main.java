@@ -32,6 +32,10 @@ public class Main {
         t.setFahrenheit(100);
         double c = t.getCelsius();
 
+        // 한 줄에 호출 여러 개: 힌트에 마우스를 올리면 해당 함수 이름이 강조된다.
+        // factorial 을 펼치면 본문의 multiplyBy(n, factorial(n - 1)) 줄에서 두 힌트와 이름이 서로 다른 색이다.
+        int mixed = MathUtil.add(MathUtil.factorial(3), MathUtil.addAll(1, 2));
+
         // JDK 메서드에는 힌트가 붙지 않아야 한다.
         System.out.println(sum);
     }
