@@ -1,6 +1,5 @@
 package com.github.ljk0071.inlinecall
 
-import com.intellij.codeInsight.hints.declarative.CollapseState
 import com.intellij.codeInsight.hints.declarative.HintColorKind
 import com.intellij.codeInsight.hints.declarative.HintFormat
 import com.intellij.codeInsight.hints.declarative.InlayHintsCollector
@@ -37,29 +36,17 @@ class InlineCallHintsProvider : InlayHintsProvider {
             } ?: return
             val label = CallTargets.labelOf(methods)
             val offset = element.textRange.endOffset
-            val state = if (ExpandedCalls.isExpanded(editor, offset)) CollapseState.Expanded else CollapseState.Collapsed
+            val expanded = ExpandedCalls.isExpanded(editor, offset)
 
             sink.addPresentation(
                 InlineInlayPosition(offset, relatedToPrevious = true),
                 tooltip = "Click to show/hide the body of ${methods.joinToString { it.name }}",
                 hintFormat = FORMAT,
             ) {
-                // 목록 전체를 toggleButton 으로 감싸서 힌트 어디를 클릭해도 ▶/▼ 가 바뀌게 한다.
-                collapsibleList(
-                    state = state,
-                    expandedState = {
-                        toggleButton {
-                            text("▼ ")
-                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
-                        }
-                    },
-                    collapsedState = {
-                        toggleButton {
-                            text("▶ ")
-                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
-                        }
-                    },
-                )
+                // 플랫폼 토글(collapsibleList/toggleButton)은 사용자가 한 번 누른 상태를 계속 유지하고
+                // provider 가 넘기는 상태를 무시해서, 자동으로 접힐 때 등 실제 펼침 상태와 어긋났다. 화살표는 직접 정한다.
+                text(if (expanded) "▼ " else "▶ ")
+                label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
             }
         }
     }

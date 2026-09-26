@@ -87,6 +87,7 @@ object ExpandedCalls {
         fun collapse(callEndOffset: Int): Boolean {
             val marker = entries.keys.firstOrNull { it.isValid && it.endOffset == callEndOffset } ?: return false
             remove(marker)
+            refreshHints()
             return true
         }
 
@@ -100,6 +101,14 @@ object ExpandedCalls {
                 FunctionBodyRenderer(bodies, indentPx, options.maxLines, options.maxDepth),
             ) ?: return
             entries[editor.document.createRangeMarker(callRange)] = inlay
+            refreshHints()
+        }
+
+        /** 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞추기 위해 이 에디터 파일의 힌트를 다시 수집한다. */
+        private fun refreshHints() {
+            val project = editor.project ?: return
+            val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
+            DaemonCodeAnalyzer.getInstance(project).restart(psiFile, "inline call body toggled")
         }
 
         fun applySettings(recompute: Boolean) {
@@ -217,12 +226,7 @@ object ExpandedCalls {
                 }
             }
             // 호출부 힌트의 ▼ 표시를 되돌리기 위해 힌트를 다시 수집한다.
-            if (removed) {
-                val project = editor.project ?: return
-                PsiDocumentManager.getInstance(project).getPsiFile(editor.document)?.let {
-                    DaemonCodeAnalyzer.getInstance(project).restart(it, "inline call body collapsed")
-                }
-            }
+            if (removed) refreshHints()
         }
 
         override fun dispose() {

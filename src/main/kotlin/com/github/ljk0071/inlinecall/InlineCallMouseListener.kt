@@ -1,7 +1,6 @@
 package com.github.ljk0071.inlinecall
 
 import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
@@ -22,8 +21,8 @@ import java.awt.event.MouseEvent
 import javax.swing.SwingUtilities
 
 /**
- * 선언형 힌트는 일반 클릭 시 ▶/▼ 표시만 바꾸고 핸들러를 호출하지 않는다(Ctrl+클릭만 핸들러 호출).
- * 그래서 에디터 마우스 리스너로 같은 클릭을 받아 본문 block inlay 를 붙이거나 뗀다.
+ * 선언형 힌트는 일반 클릭에 핸들러를 호출하지 않는다(Ctrl+클릭만 핸들러 호출).
+ * 그래서 에디터 마우스 리스너로 클릭을 받아 본문 block inlay 를 붙이거나 뗀다.
  * 펼친 본문 안에서의 Cmd(Ctrl)+클릭 이동과 밑줄 표시도 여기서 처리한다.
  */
 class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
@@ -57,7 +56,14 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         val clickable = token != null || hit is BodyHit.Call
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
-        if (renderer == null) return
+        if (renderer == null) {
+            // 호출부 힌트는 토글 버튼을 쓰지 않으므로 클릭할 수 있다는 표시(손가락 커서)를 직접 한다.
+            if (inlay != null && isOurHint(inlay)) {
+                hoveredInlay = inlay
+                (e.editor as? EditorEx)?.setCustomCursor(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
+            }
+            return
+        }
         if (renderer.hovered !== token) {
             renderer.hovered = token
             inlay.repaint()
@@ -122,30 +128,12 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     }
 
     override fun mouseClicked(e: EditorMouseEvent) {
-        // 플랫폼 리스너가 ▶/▼ 를 토글할 수 있도록 이벤트를 consume 하지 않는다.
+        // 힌트의 ▶/▼ 는 펼침 상태로 우리가 그린다(ExpandedCalls 가 상태가 바뀔 때마다 힌트를 다시 수집한다).
         if (e.area != EditorMouseEventArea.EDITING_AREA) return
         if (!SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
         val inlay = e.inlay ?: return
         if (!isOurHint(inlay)) return
         toggle(e.editor, inlay.offset)
-        // 다른 마우스 리스너(플랫폼)가 이 클릭으로 캐럿을 옮긴 뒤에 보정하도록 이벤트 처리가 끝난 다음 실행한다.
-        val editor = e.editor
-        val offset = inlay.offset
-        ApplicationManager.getApplication().invokeLater({ keepCaretBeforeHint(editor, offset) }, { editor.isDisposed })
-    }
-
-    companion object {
-        /**
-         * 힌트를 클릭하면 플랫폼이 캐럿을 힌트 오프셋(호출 끝)으로 옮기면서 화면에서는 힌트 오른쪽에 그린다.
-         * 입력은 호출 바로 뒤에 들어가므로, 화면에서도 힌트 왼쪽(호출 바로 뒤)에 보이도록 옮긴다.
-         */
-        fun keepCaretBeforeHint(editor: Editor, offset: Int) {
-            if (editor.caretModel.caretCount > 1) return
-            val caret = editor.caretModel.primaryCaret
-            if (caret.offset != offset || caret.hasSelection()) return
-            val beforeInlays = editor.offsetToVisualPosition(offset, /* leanForward = */ false, /* beforeSoftWrap = */ false)
-            if (caret.visualPosition != beforeInlays) caret.moveToVisualPosition(beforeInlays)
-        }
     }
 
     /**
