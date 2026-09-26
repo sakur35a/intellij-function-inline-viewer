@@ -1,4 +1,4 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement

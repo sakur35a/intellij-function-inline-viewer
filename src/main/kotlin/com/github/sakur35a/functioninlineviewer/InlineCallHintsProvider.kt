@@ -1,4 +1,4 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.codeInsight.hints.declarative.CollapseState
 import com.intellij.codeInsight.hints.declarative.HintColorKind
@@ -19,7 +19,7 @@ import com.intellij.psi.PsiFile
 class InlineCallHintsProvider : InlayHintsProvider {
 
     companion object {
-        const val PROVIDER_ID: String = "inline.call.body"
+        const val PROVIDER_ID: String = "functioninlineviewer.call.body"
 
         /** 선언형 힌트의 text() 한 조각 최대 길이 */
         private const val MAX_TEXT_LENGTH = 30

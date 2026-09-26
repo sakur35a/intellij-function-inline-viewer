@@ -7,10 +7,10 @@
     <extensions defaultExtensionNs="com.intellij">
         <codeInsight.declarativeInlayProvider
                 language="kotlin"
-                implementationClass="com.github.ljk0071.inlinecall.InlineCallHintsProvider"
+                implementationClass="com.github.sakur35a.functioninlineviewer.InlineCallHintsProvider"
                 isEnabledByDefault="true"
                 group="OTHER_GROUP"
-                providerId="inline.call.body"
+                providerId="functioninlineviewer.call.body"
                 bundle="messages.InlineCallBundle"
                 nameKey="inlay.inline.call.name"
                 descriptionKey="inlay.inline.call.description"/>

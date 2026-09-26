@@ -1,15 +1,15 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.openapi.diagnostic.Logger
 
 /**
- * 성능 측정용 로그. 디버그 카테고리 `#com.github.ljk0071.inlinecall.perf` 가 켜져 있을 때만 시간을 잰다.
+ * 성능 측정용 로그. 디버그 카테고리 `#com.github.sakur35a.functioninlineviewer.perf` 가 켜져 있을 때만 시간을 잰다.
  * 한 줄 형식: `perf event=<이름> ms=<시간> <상세>` (idea.log 에서 grep/집계하기 쉽게 고정)
  */
 object Perf {
 
     @PublishedApi
-    internal val LOG: Logger = Logger.getInstance("#com.github.ljk0071.inlinecall.perf")
+    internal val LOG: Logger = Logger.getInstance("#com.github.sakur35a.functioninlineviewer.perf")
 
     val enabled: Boolean get() = LOG.isDebugEnabled
 

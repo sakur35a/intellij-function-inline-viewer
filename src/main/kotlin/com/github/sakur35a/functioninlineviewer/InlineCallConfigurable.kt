@@ -1,4 +1,4 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.options.BoundConfigurable
@@ -8,7 +8,7 @@ import com.intellij.ui.dsl.builder.bindIntValue
 import com.intellij.ui.dsl.builder.bindSelected
 import com.intellij.ui.dsl.builder.panel
 
-/** Settings > Editor > Inline Call Body */
+/** Settings > Editor > Function Inline Viewer */
 class InlineCallConfigurable : BoundConfigurable(InlineCallBundle.message("settings.display.name")) {
 
     /** 저장한 뒤 이미 펼쳐진 본문과 힌트에 바로 반영한다. */

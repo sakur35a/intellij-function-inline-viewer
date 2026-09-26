@@ -1,4 +1,4 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.codeHighlighting.RainbowHighlighter
 import com.intellij.openapi.editor.colors.EditorColors
@@ -24,7 +24,7 @@ object InlineCallColors {
     }
 }
 
-/** Settings > Editor > Color Scheme > Inline Call Body */
+/** Settings > Editor > Color Scheme > Function Inline Viewer */
 class InlineCallColorSettingsPage : ColorSettingsPage {
 
     override fun getDisplayName(): String = InlineCallBundle.message("settings.display.name")

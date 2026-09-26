@@ -1,12 +1,42 @@
 <idea-plugin>
-    <id>com.github.ljk0071.inlinecall</id>
-    <name>Inline Call Body</name>
-    <vendor>ljk0071</vendor>
+    <id>com.github.sakur35a.functioninlineviewer</id>
+    <name>Function Inline Viewer</name>
+    <vendor url="https://github.com/sakur35a">sakur35a</vendor>
 
     <description><![CDATA[
-    Shows a gray inlay hint next to method/function calls whose target is defined in the project sources.
-    Click the hint to expand the body of the called function below the call, click again to collapse it.
+    <p>Read code without leaving the call site. Function Inline Viewer adds a small hint after every call
+    to a function that is defined in your project; click it and the function's body unfolds right below the
+    call. Click again to fold it. No popups, no jumping between files.</p>
+
+    <ul>
+      <li><b>Nested unfolding</b> &mdash; calls inside an unfolded body get their own hints, so you can follow
+          a call chain down several levels (depth is configurable).</li>
+      <li><b>Syntax and semantic colors</b> &mdash; the unfolded code is highlighted like the editor, with
+          parameters, fields, methods and classes colored by kind.</li>
+      <li><b>Cmd/Ctrl+click navigation</b> inside unfolded code, plus hover highlighting that pairs a hint with
+          the name it belongs to.</li>
+      <li><b>Interfaces and overrides</b> &mdash; unfold an abstract method or an overridable method and load its
+          implementations or overrides on demand (paged, with "next" and "all").</li>
+      <li><b>Method chains</b> such as <code>a.foo().bar()</code> are merged into a single hint.
+          Several calls on one line get different colors (configurable in the color scheme).</li>
+      <li><b>Stays fresh</b> &mdash; unfolded bodies update while you edit the caller or the callee, and are
+          restored when you reopen the project.</li>
+      <li>Only <b>project sources</b> get hints; library and JDK calls are ignored.</li>
+      <li>Works with <b>Java</b> and <b>Kotlin</b> (including extension functions, lambdas and custom
+          property accessors).</li>
+    </ul>
+
+    <p>Settings: <i>Settings | Editor | Function Inline Viewer</i> (maximum lines, nesting depth, chain merging)
+    and <i>Settings | Editor | Color Scheme | Function Inline Viewer</i> (colors).
+    The hints can be switched off under <i>Settings | Editor | Inlay Hints | Other</i>.</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+    <b>1.0.0</b>
+    <ul>
+      <li>Initial release.</li>
+    </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>
@@ -17,24 +47,24 @@
     <extensions defaultExtensionNs="com.intellij">
         <codeInsight.declarativeInlayProvider
                 language="JAVA"
-                implementationClass="com.github.ljk0071.inlinecall.InlineCallHintsProvider"
+                implementationClass="com.github.sakur35a.functioninlineviewer.InlineCallHintsProvider"
                 isEnabledByDefault="true"
                 group="OTHER_GROUP"
-                providerId="inline.call.body"
+                providerId="functioninlineviewer.call.body"
                 bundle="messages.InlineCallBundle"
                 nameKey="inlay.inline.call.name"
                 descriptionKey="inlay.inline.call.description"/>
 
-        <editorFactoryMouseListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
-        <editorFactoryMouseMotionListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
-        <editorFactoryListener implementation="com.github.ljk0071.inlinecall.HintStateListener"/>
+        <editorFactoryMouseListener implementation="com.github.sakur35a.functioninlineviewer.InlineCallMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.github.sakur35a.functioninlineviewer.InlineCallMouseListener"/>
+        <editorFactoryListener implementation="com.github.sakur35a.functioninlineviewer.HintStateListener"/>
 
-        <colorSettingsPage implementation="com.github.ljk0071.inlinecall.InlineCallColorSettingsPage"/>
+        <colorSettingsPage implementation="com.github.sakur35a.functioninlineviewer.InlineCallColorSettingsPage"/>
 
         <applicationConfigurable
                 parentId="editor"
-                id="inline.call.body.settings"
-                instance="com.github.ljk0071.inlinecall.InlineCallConfigurable"
+                id="functioninlineviewer.settings"
+                instance="com.github.sakur35a.functioninlineviewer.InlineCallConfigurable"
                 bundle="messages.InlineCallBundle"
                 key="settings.display.name"/>
     </extensions>

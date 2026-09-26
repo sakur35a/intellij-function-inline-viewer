@@ -1,1 +1,1 @@
-rootProject.name = "intellij-inline-call"
+rootProject.name = "intellij-function-inline-viewer"

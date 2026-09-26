@@ -17,6 +17,9 @@ repositories {
 }
 
 dependencies {
+    intellijPlatform {
+        pluginVerifier()
+    }
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.opentest4j:opentest4j:1.3.0")
 
@@ -37,7 +40,21 @@ intellijPlatform {
     pluginConfiguration {
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
+            // 상한은 두지 않는다. 새 IDE 버전과의 호환은 verifyPlugin 으로 확인한다.
+            untilBuild = provider { null }
         }
+    }
+
+    pluginVerification {
+        ides {
+            // 지원하는 최소 버전(sinceBuild)과 같은 IntelliJ IDEA Ultimate 로 검증한다.
+            create("IU", providers.gradleProperty("platformVersion"))
+        }
+    }
+
+    publishing {
+        // 업로드용 토큰은 환경 변수 PUBLISH_TOKEN 으로만 받는다(코드/저장소에 두지 않는다).
+        token = providers.environmentVariable("PUBLISH_TOKEN")
     }
 }
 
@@ -61,7 +78,7 @@ tasks {
             val perfDir = layout.buildDirectory.dir("perf").get().asFile
             perfDir.mkdirs()
             jvmArgs(
-                "-Didea.log.debug.categories=#com.github.ljk0071.inlinecall.perf",
+                "-Didea.log.debug.categories=#com.github.sakur35a.functioninlineviewer.perf",
                 "-XX:StartFlightRecording=filename=${perfDir.absolutePath}/runIde.jfr,settings=profile,dumponexit=true",
                 // 정상 종료가 아니면 runIde.jfr 이 비어 있다. 기록 조각(chunk)을 여기 남겨 `jfr assemble` 로 복구할 수 있게 한다.
                 "-XX:FlightRecorderOptions=repository=${perfDir.absolutePath}/jfr-repo",

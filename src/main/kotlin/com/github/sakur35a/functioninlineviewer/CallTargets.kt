@@ -1,4 +1,4 @@
-package com.github.ljk0071.inlinecall
+package com.github.sakur35a.functioninlineviewer
 
 import com.intellij.lang.Language
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
