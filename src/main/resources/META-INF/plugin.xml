@@ -1,0 +1,29 @@
+<idea-plugin>
+    <id>com.github.ljk0071.inlinecall</id>
+    <name>Inline Call Body</name>
+    <vendor>ljk0071</vendor>
+
+    <description><![CDATA[
+    Shows a gray inlay hint next to method/function calls whose target is defined in the project sources.
+    Click the hint to expand the body of the called function below the call, click again to collapse it.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.java</depends>
+
+    <resource-bundle>messages.InlineCallBundle</resource-bundle>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.declarativeInlayProvider
+                language="JAVA"
+                implementationClass="com.github.ljk0071.inlinecall.InlineCallHintsProvider"
+                isEnabledByDefault="true"
+                group="OTHER_GROUP"
+                providerId="inline.call.body"
+                bundle="messages.InlineCallBundle"
+                nameKey="inlay.inline.call.name"
+                descriptionKey="inlay.inline.call.description"/>
+
+        <editorFactoryMouseListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
+    </extensions>
+</idea-plugin>
