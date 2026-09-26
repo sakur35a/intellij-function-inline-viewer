@@ -291,10 +291,9 @@ class FunctionBody(
             for (element in SyntaxTraverser.psiTraverser(declaration)) {
                 val callEnd = element.textRange.endOffset
                 if (callEnd <= start || callEnd > end) continue
-                val call = CallTargets.toCall(element) ?: continue
-                val methods = CallTargets.hintTargets(call) ?: continue
-                result[callEnd] = CallTargets.labelOf(methods) to
-                    methods.map { pointers.createSmartPsiElementPointer(CallTargets.declarationOf(it)) }
+                val hint = CallTargets.hintFor(element) ?: continue
+                result[callEnd] = hint.label to
+                    hint.methods.map { pointers.createSmartPsiElementPointer(CallTargets.declarationOf(it)) }
             }
             return result
         }

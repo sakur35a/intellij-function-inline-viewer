@@ -105,6 +105,7 @@ object CallTargets {
 
     private const val KT_NAMED_FUNCTION = "org.jetbrains.kotlin.psi.KtNamedFunction"
     private const val KT_PROPERTY_ACCESSOR = "org.jetbrains.kotlin.psi.KtPropertyAccessor"
+    private const val KT_NAME_REFERENCE = "org.jetbrains.kotlin.psi.KtNameReferenceExpression"
 
     /** 실제 소스 선언 PSI (Kotlin light method 이면 KtNamedFunction). [isProjectDeclaration] 을 통과한 메서드에 쓴다. */
     fun declarationOf(method: PsiMethod): PsiElement = ownDeclaration(method) ?: method.navigationElement
@@ -138,14 +139,32 @@ object CallTargets {
         return sameLineChain(call).mapNotNull(::resolveProjectMethod).ifEmpty { null }
     }
 
-    /** 힌트 오프셋(호출식 끝)에서 힌트 대상 호출을 찾는다: (호출 범위, 대상 메서드들). 읽기 작업 안에서 호출. */
-    fun hintAt(file: PsiFile, callEndOffset: Int): Pair<TextRange, List<PsiMethod>>? {
-        if (callEndOffset <= 0) return null
-        // 힌트는 호출식 끝에 붙으므로, 끝 오프셋이 같은 부모들 중 호출식을 찾는다.
-        var element = file.findElementAt(callEndOffset - 1)
-        while (element != null && element.textRange.endOffset == callEndOffset) {
-            val call = toCall(element)
-            if (call != null) return hintTargets(call)?.let { element.textRange to it }
+    /** 힌트 하나: 붙는 위치(호출식/참조 범위, 끝에 붙는다), 펼칠 대상 메서드들, 라벨 */
+    data class Hint(val range: TextRange, val methods: List<PsiMethod>, val label: String)
+
+    /**
+     * [element] 에 붙일 힌트. 읽기 작업 안에서 호출.
+     * 호출식이면 호출 대상(체인은 합쳐서), Kotlin 프로퍼티 참조면 직접 작성한 접근자가 있을 때만.
+     */
+    fun hintFor(element: PsiElement): Hint? {
+        val call = toCall(element)
+        if (call != null) {
+            val methods = hintTargets(call) ?: return null
+            return Hint(element.textRange, methods, labelOf(methods))
+        }
+        // Kotlin 플러그인이 없을 때 Kotlin 클래스를 로드하지 않도록 이름으로 먼저 거른다.
+        if (element.javaClass.name == KT_NAME_REFERENCE) return KotlinPropertyAccess.hint(element)
+        return null
+    }
+
+    /** 힌트 오프셋(호출식/참조 끝)에서 힌트를 찾는다. 읽기 작업 안에서 호출. */
+    fun hintAt(file: PsiFile, hintOffset: Int): Hint? {
+        if (hintOffset <= 0) return null
+        // 힌트는 끝에 붙으므로, 끝 오프셋이 같은 부모들 중에서 찾는다. 호출식을 만나면 거기서 멈춘다.
+        var element = file.findElementAt(hintOffset - 1)
+        while (element != null && element.textRange.endOffset == hintOffset) {
+            val hint = hintFor(element)
+            if (hint != null || toCall(element) != null) return hint
             element = element.parent
         }
         return null

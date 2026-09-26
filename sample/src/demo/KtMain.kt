@@ -13,6 +13,12 @@ fun main() {
     // A-2 확인용: 펼친 본문 안의 ▶ twice() 를 다시 펼칠 수 있다.
     val q = quadruple(sum)
 
+    // 프로퍼티 접근: 직접 작성한 get()/set() 이 있을 때만 힌트(읽기 ▶ fahrenheit, 대입 ▶ set fahrenheit).
+    val temp = Temperature(20.0)
+    val f = temp.fahrenheit
+    temp.fahrenheit = 212.0
+    val c = temp.celsius   // 기본 접근자: 힌트 없음
+
     // 표준 라이브러리 호출에는 힌트가 없어야 한다.
     listOf(sum).forEach { println(it) }
 }

@@ -1,6 +1,8 @@
 package com.github.ljk0071.inlinecall
 
 import com.intellij.codeInsight.hints.declarative.InlayHintsProviderFactory
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.lang.java.JavaLanguage
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.util.PsiTreeUtil
@@ -102,5 +104,63 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             listOf("fun Int.twice(): Int {", "    return this * 2", "}"),
             CallTargets.bodyLines(method),
         )
+    }
+
+    /** Kotlin 프로퍼티 접근은 get()/set() 을 직접 작성했을 때만 힌트(읽기는 getter, 대입은 setter). */
+    fun testPropertyAccessWithWrittenAccessors() {
+        myFixture.addFileToProject(
+            "demo/T.kt",
+            """
+            package demo
+            class T(var celsius: Double) {
+                var fahrenheit: Double
+                    get() = celsius * 9 / 5 + 32
+                    set(value) { celsius = (value - 32) * 5 / 9 }
+                val plain: Int = 1
+                var onlyGetter: Int = 0
+                    get() = field + 1
+            }
+            """.trimIndent(),
+        )
+        doTestProvider(
+            "Main.kt",
+            """
+            package demo
+
+            fun m(t: T) {
+                val a = t.fahrenheit/*<# ▶ |fahrenheit #>*/
+                t.fahrenheit/*<# ▶ |set fahrenheit #>*/ = 100.0
+                t.fahrenheit/*<# ▶ |set fahrenheit #>*/ += 1.0
+                val b = t.plain
+                t.celsius = 2.0
+                val c = t.onlyGetter/*<# ▶ |onlyGetter #>*/
+                t.onlyGetter = 3
+                val fahrenheit = 1
+                println(fahrenheit)
+            }
+            """.trimIndent(),
+            InlineCallHintsProvider(),
+        )
+    }
+
+    fun testPropertyAccessExpandsDeclaration() {
+        myFixture.addFileToProject(
+            "demo/T.kt",
+            """
+            package demo
+            class T(var celsius: Double) {
+                val fahrenheit: Double
+                    get() = celsius * 9 / 5 + 32
+            }
+            """.trimIndent(),
+        )
+        myFixture.configureByText("Main.kt", "package demo\n\nfun m(t: T) = t.fahrenheit\n")
+        val end = myFixture.editor.document.text.lastIndexOf("t.fahrenheit") + "t.fahrenheit".length
+        val bodies = ApplicationManager.getApplication().executeOnPooledThread<List<FunctionBody>> {
+            ReadAction.compute<List<FunctionBody>, RuntimeException> {
+                CallTargets.hintAt(myFixture.file, end)!!.methods.map { CallTargets.body(it)!! }
+            }
+        }.get()
+        assertEquals(listOf("val fahrenheit: Double", "    get() = celsius * 9 / 5 + 32"), bodies.single().lines.map { it.text })
     }
 }
