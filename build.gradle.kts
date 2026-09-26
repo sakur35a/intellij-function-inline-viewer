@@ -63,6 +63,8 @@ tasks {
             jvmArgs(
                 "-Didea.log.debug.categories=#com.github.ljk0071.inlinecall.perf",
                 "-XX:StartFlightRecording=filename=${perfDir.absolutePath}/runIde.jfr,settings=profile,dumponexit=true",
+                // 정상 종료가 아니면 runIde.jfr 이 비어 있다. 기록 조각(chunk)을 여기 남겨 `jfr assemble` 로 복구할 수 있게 한다.
+                "-XX:FlightRecorderOptions=repository=${perfDir.absolutePath}/jfr-repo",
             )
         }
     }
