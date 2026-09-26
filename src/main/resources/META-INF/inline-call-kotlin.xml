@@ -1,0 +1,18 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="org.jetbrains.kotlin">
+        <!-- UAST 만 사용하므로 K1/K2 모두 동작한다. 선언하지 않으면 K2 모드에서 이 설정이 로드되지 않는다. -->
+        <supportsKotlinPluginMode supportsK2="true"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <codeInsight.declarativeInlayProvider
+                language="kotlin"
+                implementationClass="com.github.ljk0071.inlinecall.InlineCallHintsProvider"
+                isEnabledByDefault="true"
+                group="OTHER_GROUP"
+                providerId="inline.call.body"
+                bundle="messages.InlineCallBundle"
+                nameKey="inlay.inline.call.name"
+                descriptionKey="inlay.inline.call.description"/>
+    </extensions>
+</idea-plugin>

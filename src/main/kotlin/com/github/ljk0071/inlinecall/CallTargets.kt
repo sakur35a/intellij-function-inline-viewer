@@ -57,9 +57,14 @@ object CallTargets {
     fun declarationOf(method: PsiMethod): PsiElement =
         method.toUElementOfType<UMethod>()?.sourcePsi ?: method.navigationElement
 
-    /** 접힌 상태에서 보여줄 "이름(파라미터...)" */
+    /**
+     * 접힌 상태에서 보여줄 "이름(파라미터...)".
+     * Kotlin light method 의 합성 파라미터(확장 receiver `$this$..`, suspend `$completion`)는 뺀다.
+     */
     fun signatureOf(method: PsiMethod): Pair<String, String> {
-        val params = method.parameterList.parameters.joinToString(", ") { it.name }
+        val params = method.parameterList.parameters
+            .filterNot { it.name.startsWith("$") }
+            .joinToString(", ") { it.name }
         return method.name to "($params)"
     }
 
