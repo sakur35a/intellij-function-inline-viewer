@@ -153,7 +153,9 @@ class FunctionBody(
                     }
                     semanticNanos += System.nanoTime() - semanticStart
                 }
-                val calls = callEnds.subMap(from + 1, true, lineEnd, true).map { (callEnd, call) ->
+                // 빈 줄은 from == lineEnd 라 범위가 뒤집히므로 건너뛴다.
+                val lineCalls = if (from < lineEnd) callEnds.subMap(from + 1, true, lineEnd, true) else emptyMap()
+                val calls = lineCalls.map { (callEnd, call) ->
                     // 호출식 마지막 글자를 담은 토큰 뒤에 힌트를 붙인다.
                     val index = trimmed.indexOfLast { token -> token.sourceOffset < callEnd }
                     val ordinal = labelCounts.merge(call.first, 1, Int::plus)

@@ -161,4 +161,18 @@ class FunctionBodyTest : BasePlatformTestCase() {
         assertTrue(renderer.collapse(root, root.body.lines[1].calls.single()))
         assertEquals(3, renderer.visibleText().size)
     }
+
+    /** 빈 줄(공백만 있는 줄 포함)이 있는 본문도 만들어져야 한다(예전엔 IllegalArgumentException: fromKey > toKey). */
+    fun testBodyWithBlankLines() {
+        myFixture.configureByText(
+            "A.java",
+            "class A {\n    int helper(int x) { return x; }\n    int caller() {\n        int a = helper(1);\n\n    \n        return helper(a);\n    }\n}\n",
+        )
+        val body = CallTargets.body(javaMethod("caller"))!!
+        assertEquals(
+            listOf("int caller() {", "    int a = helper(1);", "", "", "    return helper(a);", "}"),
+            body.lines.map { it.text },
+        )
+        assertEquals(listOf("helper(x)", "helper(x)"), body.calls.map { it.label }.toList())
+    }
 }
