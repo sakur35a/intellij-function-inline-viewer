@@ -188,6 +188,58 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertTrue(renderer.visibleText().contains("\toverride fun area(): Double = 0.5"))
     }
 
+    fun testDefaultMethodOffersLazyOverridesSearch() {
+        val procFile = myFixture.addFileToProject(
+            "demo/Proc.java",
+            """
+            package demo;
+            interface Proc {
+                default Object before(Object bean) {
+                    return bean;
+                }
+            }
+            class Wrap implements Proc { public Object before(Object bean) { return "w"; } }
+            class Plain implements Proc {}
+            """.trimIndent(),
+        )
+        myFixture.configureByText("Main.java", "package demo;\nclass Main {\n    Object v(Proc p) { return p.before(1); }\n}\n")
+        val end = myFixture.editor.document.text.lastIndexOf("before(1)") + "before(1)".length
+        val (range, bodies) = inBackground {
+            val (range, methods) = CallTargets.hintAt(myFixture.file, end)!!
+            range to methods.map { CallTargets.body(it)!! }
+        }
+        ExpandedCalls.expand(myFixture.editor, range, bodies, 0)
+        val renderer = renderers().single()
+        val root = renderer.roots.single()
+        assertEquals(
+            listOf("default Object before(Object bean) {", "    return bean;", "}", InlineCallBundle.message("body.overrides")),
+            renderer.visibleText(),
+        )
+
+        // "find" 를 펼칠 때 처음으로 재정의를 검색한다. 재정의하지 않은 Plain 은 빠진다.
+        val find = root.body.calls.single()
+        assertTrue(find.searchesOverrides)
+        assertTrue(renderer.expand(root, find, inBackground { find.targets.mapNotNull { it.element?.let(find::load) } }))
+        val overrides = root.children.getValue(find).single()
+        assertEquals(listOf("Wrap.before(bean)"), overrides.body.calls.map { it.label }.toList())
+
+        // 원본이 바뀌어 다시 계산돼도 재정의 목록 펼침은 유지된다.
+        val proc = PsiDocumentManager.getInstance(project).getDocument(procFile)!!
+        edit { proc.insertString(proc.text.indexOf("return bean;"), "// edited\n        ") }
+        ExpandedCalls.refreshNow(myFixture.editor)
+        val refreshed = renderers().single().roots.single()
+        assertEquals(listOf("Wrap.before(bean)"), refreshed.children.values.single().single().body.calls.map { it.label }.toList())
+    }
+
+    fun testNoOverridesLineWithoutInheritors() {
+        myFixture.configureByText(
+            "A.java",
+            "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n",
+        )
+        val renderer = expandCallEndingWith("helper()")
+        assertEquals(listOf("int helper() { return 1; }"), renderer.visibleText())
+    }
+
     fun testImplementationLinesHiddenAtMaxDepth() {
         myFixture.configureByText(
             "S.java",

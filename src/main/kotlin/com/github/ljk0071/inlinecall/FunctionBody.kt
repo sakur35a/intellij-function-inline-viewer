@@ -9,8 +9,10 @@ import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiModifier
 import com.intellij.psi.PsiNamedElement
 import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.DirectClassInheritorsSearch
 import com.intellij.psi.search.searches.OverridingMethodsSearch
 import com.intellij.util.Processor
 import com.intellij.psi.PsiWhiteSpace
@@ -52,7 +54,13 @@ class BodyCall(
     val label: String,
     val targets: List<SmartPsiElementPointer<PsiElement>>,
     val key: String,
-)
+    /** true 면 대상 본문 대신 대상 메서드의 재정의 목록을 펼친다(클릭할 때 검색). */
+    val searchesOverrides: Boolean = false,
+) {
+    /** 이 힌트를 펼쳤을 때 보여줄 본문. 읽기 작업 안에서 호출. */
+    fun load(target: PsiElement): FunctionBody? =
+        if (searchesOverrides) FunctionBody.overridesOf(target) else FunctionBody.of(target)
+}
 
 /** [nestedOnly] 면 더 펼칠 수 없는 깊이(최대 깊이)에서는 줄 자체를 숨긴다(구현체 목록처럼 힌트만 있는 줄). */
 class BodyLine(val tokens: List<BodyToken>, val calls: List<BodyCall> = emptyList(), val nestedOnly: Boolean = false) {
@@ -99,8 +107,11 @@ class FunctionBody(
             if (start >= end) return null
 
             val chars = document.immutableCharSequence
-            val highlighter = Perf.measure("body.lex", detail = { "file=${psiFile.name} chars=${chars.length}" }) {
-                EditorHighlighterFactory.getInstance().createEditorHighlighter(psiFile.project, file).also { it.setText(chars) }
+            // 파일 전체가 아니라 선언 범위만 렉싱한다(선언 시작은 문자열/주석 밖이므로 렉서 초기 상태에서 시작해도 된다).
+            // 이터레이터 오프셋은 [start] 기준이다.
+            val highlighter = Perf.measure("body.lex", detail = { "file=${psiFile.name} chars=${end - start}" }) {
+                EditorHighlighterFactory.getInstance().createEditorHighlighter(psiFile.project, file)
+                    .also { it.setText(chars.subSequence(start, end)) }
             }
 
             val callEnds = Perf.measure("body.calls", detail = { "name=${(declaration as? PsiNamedElement)?.name}" }) {
@@ -121,10 +132,10 @@ class FunctionBody(
                     while (from < limit && (chars[from] == ' ' || chars[from] == '\t')) from++
                 }
                 val tokens = ArrayList<BodyToken>()
-                val it = highlighter.createIterator(from)
-                while (!it.atEnd() && it.start < lineEnd) {
-                    val s = maxOf(it.start, from)
-                    val e = minOf(it.end, lineEnd)
+                val it = highlighter.createIterator(from - start)
+                while (!it.atEnd() && it.start + start < lineEnd) {
+                    val s = maxOf(it.start + start, from)
+                    val e = minOf(it.end + start, lineEnd)
                     if (s < e) {
                         val raw = chars.substring(s, e)
                         tokens += BodyToken(raw.replace("\t", "    "), s, it.textAttributesKeys, exact = '\t' !in raw)
@@ -156,25 +167,70 @@ class FunctionBody(
             val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
             val method = declaration.toUElementOfType<UMethod>()
             val hasBody = method?.let { it.uastBody != null } ?: true
-            val allLines = if (hasBody) lines else lines + implementationLines(method?.javaPsi)
+            val allLines = when {
+                !hasBody -> lines + implementationLines(method?.javaPsi)
+                method != null && isOverridable(method.javaPsi) -> lines + findOverridesLine(declaration)
+                else -> lines
+            }
             return FunctionBody(file, document.modificationStamp, allLines, target, hasBody)
         }
 
         /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
+        /**
+         * 재정의 목록만 담은 본문. "overrides: ▶ find" 를 클릭했을 때 한 단계 아래에 펼친다. 읽기 작업 안에서 호출.
+         * 재정의 검색은 계층 전체를 훑으므로 본문을 펼칠 때가 아니라 이 힌트를 클릭할 때만 한다.
+         */
+        fun overridesOf(declaration: PsiElement): FunctionBody? {
+            val method = declaration.toUElementOfType<UMethod>()?.javaPsi ?: return null
+            val psiFile = declaration.containingFile ?: return null
+            val file = psiFile.virtualFile ?: return null
+            val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
+            val lines = overridingLines(method, header = null, emptyKey = "body.no.overrides", event = "body.overrides")
+            val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
+            return FunctionBody(file, document.modificationStamp, lines, target, hasBody = true)
+        }
+
+        /** 재정의될 수 있는 인스턴스 메서드인지(인터페이스 default, final 아닌 클래스의 final 아닌 메서드, Kotlin open) */
+        private fun isOverridable(method: PsiMethod): Boolean {
+            if (method.isConstructor) return false
+            if (method.hasModifierProperty(PsiModifier.STATIC) || method.hasModifierProperty(PsiModifier.PRIVATE) ||
+                method.hasModifierProperty(PsiModifier.FINAL)
+            ) return false
+            val containingClass = method.containingClass ?: return false
+            if (!containingClass.isInterface && containingClass.hasModifierProperty(PsiModifier.FINAL)) return false
+            // 상속한 클래스가 하나도 없으면 "find" 줄은 소음이다. 직접 상속 여부만 스텁 인덱스로 싸게 확인한다.
+            return Perf.measure("body.inheritors", detail = { "class=${containingClass.name}" }) {
+                DirectClassInheritorsSearch.search(containingClass, GlobalSearchScope.projectScope(method.project)).findFirst() != null
+            }
+        }
+
+        private fun findOverridesLine(declaration: PsiElement): BodyLine {
+            val pointer = SmartPointerManager.getInstance(declaration.project).createSmartPsiElementPointer(declaration)
+            val call = BodyCall(0, InlineCallBundle.message("body.find.overrides"), listOf(pointer), "overrides", searchesOverrides = true)
+            val header = BodyToken(InlineCallBundle.message("body.overrides"), 0, arrayOf(DefaultLanguageHighlighterColors.LINE_COMMENT), exact = false)
+            return BodyLine(listOf(header), listOf(call), nestedOnly = true)
+        }
+
         private fun implementationLines(method: PsiMethod?): List<BodyLine> {
             if (method == null) return listOf(note(InlineCallBundle.message("body.no.body")))
+            return overridingLines(method, header = "body.implementations", emptyKey = "body.no.implementations", event = "body.impls")
+        }
+
+        /** [method] 를 재정의/구현한 본문 있는 메서드마다 펼칠 수 있는 힌트 한 줄. */
+        private fun overridingLines(method: PsiMethod, header: String?, emptyKey: String, event: String): List<BodyLine> {
             val found = ArrayList<PsiMethod>()
-            Perf.measure("body.impls", detail = { "name=${method.containingClass?.name}.${method.name} found=${found.size}" }) {
+            Perf.measure(event, detail = { "name=${method.containingClass?.name}.${method.name} found=${found.size}" }) {
                 OverridingMethodsSearch.search(method, GlobalSearchScope.projectScope(method.project), true)
                     .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
             }
             val implementations = found.take(MAX_IMPLEMENTATIONS).filter {
                 CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
             }
-            if (implementations.isEmpty()) return listOf(note(InlineCallBundle.message("body.no.implementations")))
+            if (implementations.isEmpty()) return listOf(note(InlineCallBundle.message(emptyKey)))
 
             val pointers = SmartPointerManager.getInstance(method.project)
-            val result = arrayListOf(note(InlineCallBundle.message("body.implementations")))
+            val result = ArrayList<BodyLine>()
+            if (header != null) result += note(InlineCallBundle.message(header))
             implementations.forEach { implementation ->
                 val label = (implementation.containingClass?.name ?: "<anonymous>") + "." + CallTargets.signatureOf(implementation)
                 val target = pointers.createSmartPsiElementPointer(CallTargets.declarationOf(implementation))

@@ -73,7 +73,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         }
         val project = editor.project ?: return
         val start = System.nanoTime()
-        ReadAction.nonBlocking<List<FunctionBody>> { call.targets.mapNotNull { it.element?.let(FunctionBody::of) } }
+        ReadAction.nonBlocking<List<FunctionBody>> { call.targets.mapNotNull { it.element?.let(call::load) } }
             .inSmartMode(project)
             .expireWith(project)
             .expireWhen { !inlay.isValid }

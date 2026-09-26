@@ -23,6 +23,7 @@ public class Main {
         // 람다 구현(아래 () -> 1.0)은 목록에 나오지 않는다.
         Shape shape = () -> 1.0;
         double area = shape.area();
+        String description = shape.describe();
 
         // JDK 메서드에는 힌트가 붙지 않아야 한다.
         System.out.println(sum);

@@ -42,6 +42,14 @@ intellijPlatform {
 }
 
 tasks {
+    // 테스트 컴파일이 main 의 API 변경(예: 기본값 파라미터가 붙은 생성자 변경)을 입력 변화로 감지하지 못해
+    // UP-TO-DATE 로 건너뛰거나 증분 컴파일에서 빠뜨려, 옛 시그니처로 컴파일된 테스트가 NoSuchMethodError 를 냈다.
+    // 테스트 코드는 작으니 항상 전체 컴파일한다.
+    compileTestKotlin {
+        incremental = false
+        outputs.upToDateWhen { false }
+    }
+
     runIde {
         // 샌드박스 IDE가 뜨면 sample 프로젝트를 연다. -PopenProject=<경로> 로 다른 프로젝트(성능 측정용)를 열 수 있다.
         val openProject = providers.gradleProperty("openProject")

@@ -11,4 +11,9 @@ public class Circle implements Shape {
     public double area() {
         return Math.PI * r * r;
     }
+
+    @Override
+    public String describe() {
+        return "circle r=" + r;
+    }
 }

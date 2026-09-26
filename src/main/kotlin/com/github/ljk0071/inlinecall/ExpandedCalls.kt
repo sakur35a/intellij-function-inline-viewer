@@ -179,15 +179,21 @@ object ExpandedCalls {
         }
 
         /** [old] 의 펼침 상태를 유지한 채 [declaration] 본문을 다시 만든다. 원본이 그대로면 기존 본문을 재사용한다. */
-        private fun rebuild(declaration: PsiElement, old: BodySnapshot?, depth: Int, force: Boolean): BodyNode? {
+        private fun rebuild(
+            declaration: PsiElement,
+            old: BodySnapshot?,
+            depth: Int,
+            force: Boolean,
+            load: (PsiElement) -> FunctionBody? = FunctionBody::of,
+        ): BodyNode? {
             val reusable = old?.body?.takeIf { !force && it.isUpToDate() && it.target.element == declaration }
-            val body = reusable ?: FunctionBody.of(declaration) ?: return null
+            val body = reusable ?: load(declaration) ?: return null
             val node = BodyNode(body, depth)
             if (old == null) return node
             for (call in body.calls) {
                 val oldChildren = old.children[call.key] ?: continue
                 val children = call.targets.mapIndexedNotNull { index, pointer ->
-                    pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1, force) }
+                    pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1, force, call::load) }
                 }
                 if (children.isNotEmpty()) node.children[call] = children
             }
