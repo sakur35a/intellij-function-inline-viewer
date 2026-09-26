@@ -1,5 +1,7 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
+import com.intellij.codeInsight.hints.declarative.impl.DeclarativeInlayHintsPassFactory
 import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
@@ -138,12 +140,29 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
     /**
      * 클릭된 inlay 가 이 플러그인의 힌트인지 확인한다.
-     * providerId 를 공개 API 로 얻을 방법이 없어 내부 API 를 여기서만 사용한다.
+     * providerId 를 공개 API 로 얻을 방법이 없어 내부 API 를 사용한다.
      */
     private fun isOurHint(inlay: Inlay<*>): Boolean {
         if (inlay.placement != Inlay.Placement.INLINE) return false
         val renderer = inlay.renderer as? DeclarativeInlayRendererBase<*> ?: return false
         return renderer.providerId == InlineCallHintsProvider.PROVIDER_ID
+    }
+
+    companion object {
+        /**
+         * 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞추기 위해 이 에디터의 힌트를 다시 수집한다. EDT 전용.
+         * 힌트 패스는 문서가 바뀌지 않으면 재수집을 건너뛰고, DaemonCodeAnalyzer.restart 로는 그 기록이 초기화되지 않는다.
+         * 초기화까지 해 주는 방법이 내부 API 뿐이라 여기서만 사용하고, 사라졌으면 restart 로 대신한다(화살표만 늦게/안 바뀜).
+         */
+        fun recomputeHints(editor: Editor) {
+            val project = editor.project ?: return
+            try {
+                DeclarativeInlayHintsPassFactory.scheduleRecompute(editor, project)
+            } catch (_: LinkageError) {
+                val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
+                DaemonCodeAnalyzer.getInstance(project).restart(psiFile, "inline call body toggled")
+            }
+        }
     }
 
     private fun toggle(editor: Editor, callEndOffset: Int) {

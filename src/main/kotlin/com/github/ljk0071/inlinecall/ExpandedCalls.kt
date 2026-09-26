@@ -1,6 +1,5 @@
 package com.github.ljk0071.inlinecall
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
@@ -104,12 +103,8 @@ object ExpandedCalls {
             refreshHints()
         }
 
-        /** 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞추기 위해 이 에디터 파일의 힌트를 다시 수집한다. */
-        private fun refreshHints() {
-            val project = editor.project ?: return
-            val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
-            DaemonCodeAnalyzer.getInstance(project).restart(psiFile, "inline call body toggled")
-        }
+        /** 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞춘다. */
+        private fun refreshHints() = InlineCallMouseListener.recomputeHints(editor)
 
         fun applySettings(recompute: Boolean) {
             val options = InlineCallSettings.getInstance().state

@@ -1,5 +1,7 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
+import com.intellij.codeInsight.hints.declarative.impl.views.TextInlayPresentationEntry
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
@@ -323,6 +325,44 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             renderers().single().visibleText(),
         )
         assertTrue("fresh body must allow navigation", renderers().single().roots.single().body.isUpToDate())
+    }
+
+    /** 에디터에 실제로 그려진 이 플러그인 힌트의 텍스트(테스트 전용으로 플랫폼 내부 렌더러를 읽는다). */
+    private fun hintTexts(): List<String> =
+        myFixture.editor.inlayModel.getInlineElementsInRange(0, myFixture.editor.document.textLength)
+            .mapNotNull { it.renderer as? DeclarativeInlayRendererBase<*> }
+            .filter { it.providerId == InlineCallHintsProvider.PROVIDER_ID }
+            .map { renderer ->
+                // getEntries() 는 바이트코드상 public 이지만 Kotlin 메타데이터가 private 이라 리플렉션으로 읽는다.
+                renderer.presentationLists.flatMap { (it.javaClass.getMethod("getEntries").invoke(it) as Array<*>).toList() }
+                    .filterIsInstance<TextInlayPresentationEntry>().joinToString("") { it.text }
+            }
+
+    /** 펼침/접힘/자동 접힘 뒤 힌트가 다시 수집되어 ▶/▼ 가 실제 상태를 따라가야 한다. */
+    fun testArrowFollowsExpansionState() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
+        myFixture.doHighlighting()
+        assertEquals(listOf("▶ helper()"), hintTexts())
+
+        expandCallEndingWith("helper()")
+        myFixture.doHighlighting()
+        assertEquals(listOf("▼ helper()"), hintTexts())
+
+        val end = myFixture.editor.document.text.lastIndexOf("helper()") + "helper()".length
+        assertTrue(ExpandedCalls.collapse(myFixture.editor, end))
+        myFixture.doHighlighting()
+        assertEquals(listOf("▶ helper()"), hintTexts())
+
+        // 다시 펼친 뒤 대상이 사라져 자동으로 접혀도 ▶ 로 돌아온다.
+        expandCallEndingWith("helper()")
+        myFixture.doHighlighting()
+        val document = myFixture.editor.document
+        edit { document.replaceString(document.text.indexOf("int helper()"), document.text.indexOf("int helper()") + "int helper()".length, "int other()") }
+        ExpandedCalls.refreshNow(myFixture.editor)
+        edit { document.replaceString(document.text.indexOf("int other()"), document.text.indexOf("int other()") + "int other()".length, "int helper()") }
+        myFixture.doHighlighting()
+        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
+        assertEquals(listOf("▶ helper()"), hintTexts())
     }
 
     fun testDeletedCallRemovesInlayAndMarker() {
