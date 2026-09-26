@@ -1,13 +1,17 @@
 package com.github.ljk0071.inlinecall
 
 import com.intellij.lang.Language
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
-import com.intellij.psi.PsiComment
+import com.intellij.pom.Navigatable
 import com.intellij.psi.PsiCompiledElement
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiManager
 import com.intellij.psi.PsiMethod
-import com.intellij.psi.PsiWhiteSpace
+import com.intellij.psi.PsiNameIdentifierOwner
+import com.intellij.psi.PsiPolyVariantReference
 import org.jetbrains.uast.UCallExpression
 import org.jetbrains.uast.UMethod
 import org.jetbrains.uast.UastCallKind
@@ -68,32 +72,30 @@ object CallTargets {
         return method.name to "($params)"
     }
 
+    /** 메서드 선언의 원문(하이라이팅/원본 위치 포함). 읽기 작업 안에서 호출. */
+    fun body(method: PsiMethod): FunctionBody? = FunctionBody.of(declarationOf(method))
+
+    fun bodyLines(method: PsiMethod): List<String>? = body(method)?.lines?.map { it.text }
+
     /**
-     * 메서드 선언의 원문을 줄 단위로 돌려준다.
-     * 앞쪽 문서 주석(Javadoc/KDoc)은 빼고, 선언부 들여쓰기만큼 공통 들여쓰기를 제거한다.
+     * 본문 원본 파일의 [offset] 에서 Cmd+클릭으로 이동할 위치. 읽기 작업 안에서 호출.
+     * 참조면 resolve 결과로, 선언 이름이면 그 선언 자신으로 이동한다.
      */
-    fun bodyLines(method: PsiMethod): List<String>? {
-        val declaration = declarationOf(method)
-        val file = declaration.containingFile ?: return null
-        val document = PsiDocumentManager.getInstance(file.project).getDocument(file) ?: return null
+    fun navigationTarget(project: Project, body: FunctionBody, offset: Int): Navigatable? {
+        if (!body.file.isValid) return null
+        val psiFile = PsiManager.getInstance(project).findFile(body.file) ?: return null
+        val document = PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return null
+        if (document.modificationStamp != body.modificationStamp) return null
 
-        val firstCode = generateSequence(declaration.firstChild) { it.nextSibling }
-            .firstOrNull { it !is PsiComment && it !is PsiWhiteSpace && it.textLength > 0 }
-        val start = firstCode?.textRange?.startOffset ?: declaration.textRange.startOffset
-        val end = declaration.textRange.endOffset
-        if (start >= end) return null
-
-        val lineStart = document.getLineStartOffset(document.getLineNumber(start))
-        val indent = start - lineStart
-        return document.charsSequence.subSequence(start, end).toString()
-            .lines()
-            .mapIndexed { i, line -> if (i == 0) line else line.dropLeadingWhitespace(indent) }
-            .map { it.replace("\t", "    ").trimEnd() }
-    }
-
-    private fun String.dropLeadingWhitespace(max: Int): String {
-        var i = 0
-        while (i < length && i < max && (this[i] == ' ' || this[i] == '\t')) i++
-        return substring(i)
+        val reference = psiFile.findReferenceAt(offset)
+        val target = reference?.resolve()
+            ?: (reference as? PsiPolyVariantReference)?.multiResolve(false)?.firstNotNullOfOrNull { it.element }
+            ?: psiFile.findElementAt(offset)?.parent?.takeIf {
+                it is PsiNameIdentifierOwner && it.nameIdentifier?.textRange?.contains(offset) == true
+            }
+            ?: return null
+        val navigation = target.navigationElement
+        val file = navigation.containingFile?.virtualFile ?: return null
+        return OpenFileDescriptor(project, file, navigation.textOffset)
     }
 }

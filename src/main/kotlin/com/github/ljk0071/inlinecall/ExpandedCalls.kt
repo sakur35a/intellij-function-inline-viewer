@@ -38,7 +38,7 @@ object ExpandedCalls {
     }
 
     /** EDT 전용. */
-    fun expand(editor: Editor, callRange: TextRange, lines: List<String>, indentPx: Int) {
+    fun expand(editor: Editor, callRange: TextRange, body: FunctionBody, indentPx: Int) {
         val map = entries(editor)
         cleanUp(map)
         val inlay = editor.inlayModel.addBlockElement(
@@ -46,7 +46,7 @@ object ExpandedCalls {
             /* relatesToPrecedingText = */ true,
             /* showAbove = */ false,
             /* priority = */ 0,
-            FunctionBodyRenderer(lines, indentPx),
+            FunctionBodyRenderer(body, indentPx),
         ) ?: return
         val marker = editor.document.createRangeMarker(callRange)
         map[marker] = inlay

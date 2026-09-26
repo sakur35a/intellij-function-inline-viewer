@@ -9,4 +9,12 @@ public class MathUtil {
         int result = a + b;
         return result;
     }
+
+    public static int addAll(int... values) {
+        int sum = 0;
+        for (int v : values) {
+            sum = add(sum, v);
+        }
+        return sum;
+    }
 }

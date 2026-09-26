@@ -8,16 +8,80 @@ import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
+import com.intellij.openapi.editor.event.EditorMouseMotionListener
+import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.TextRange
+import com.intellij.pom.Navigatable
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.util.concurrency.AppExecutorUtil
+import java.awt.Cursor
+import java.awt.event.MouseEvent
 import javax.swing.SwingUtilities
 
 /**
  * 선언형 힌트는 일반 클릭 시 ▶/▼ 표시만 바꾸고 핸들러를 호출하지 않는다(Ctrl+클릭만 핸들러 호출).
  * 그래서 에디터 마우스 리스너로 같은 클릭을 받아 본문 block inlay 를 붙이거나 뗀다.
+ * 펼친 본문 안에서의 Cmd(Ctrl)+클릭 이동과 밑줄 표시도 여기서 처리한다.
  */
-class InlineCallMouseListener : EditorMouseListener {
+class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
+
+    /** 밑줄이 그려진 본문 inlay (motion 리스너 인스턴스에서만 쓰인다) */
+    private var hoveredInlay: Inlay<*>? = null
+
+    override fun mousePressed(e: EditorMouseEvent) {
+        if (e.area != EditorMouseEventArea.EDITING_AREA) return
+        if (!SwingUtilities.isLeftMouseButton(e.mouseEvent) || !isNavigationModifier(e.mouseEvent)) return
+        val inlay = e.inlay ?: return
+        val renderer = inlay.renderer as? FunctionBodyRenderer ?: return
+        // 본문 아래에 깔린 실제 코드로 이동하거나 캐럿이 움직이지 않도록 이 클릭은 소비한다.
+        e.consume()
+        val (token, offset) = renderer.hitTest(inlay, e.mouseEvent.point) ?: return
+        if (!token.isNavigable) return
+        navigate(e.editor, renderer.body, offset)
+    }
+
+    override fun mouseMoved(e: EditorMouseEvent) {
+        val inlay = e.inlay?.takeIf { e.area == EditorMouseEventArea.EDITING_AREA }
+        val renderer = inlay?.renderer as? FunctionBodyRenderer
+        val token = if (renderer != null && isNavigationModifier(e.mouseEvent)) {
+            renderer.hitTest(inlay, e.mouseEvent.point)?.first?.takeIf { it.isNavigable }
+        } else null
+
+        if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
+        if (renderer == null) return
+        if (renderer.hovered !== token) {
+            renderer.hovered = token
+            inlay.repaint()
+        }
+        hoveredInlay = if (token != null) inlay else null
+        (e.editor as? EditorEx)?.setCustomCursor(this, if (token != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+    }
+
+    override fun mouseExited(e: EditorMouseEvent) {
+        clearHover(e.editor)
+    }
+
+    private fun clearHover(editor: Editor) {
+        val inlay = hoveredInlay ?: return
+        hoveredInlay = null
+        (inlay.renderer as? FunctionBodyRenderer)?.hovered = null
+        if (inlay.isValid) inlay.repaint()
+        (editor as? EditorEx)?.setCustomCursor(this, null)
+    }
+
+    private fun isNavigationModifier(event: MouseEvent): Boolean =
+        if (SystemInfo.isMac) event.isMetaDown else event.isControlDown
+
+    private fun navigate(editor: Editor, body: FunctionBody, offset: Int) {
+        val project = editor.project ?: return
+        ReadAction.nonBlocking<Navigatable?> { CallTargets.navigationTarget(project, body, offset) }
+            .expireWith(project)
+            .finishOnUiThread(ModalityState.defaultModalityState()) { target ->
+                if (target != null && target.canNavigate()) target.navigate(true)
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
+    }
 
     override fun mouseClicked(e: EditorMouseEvent) {
         // 플랫폼 리스너가 ▶/▼ 를 토글할 수 있도록 이벤트를 consume 하지 않는다.
@@ -49,12 +113,12 @@ class InlineCallMouseListener : EditorMouseListener {
             .expireWhen { editor.isDisposed }
             .finishOnUiThread(ModalityState.defaultModalityState()) { expansion ->
                 if (expansion == null || ExpandedCalls.isExpanded(editor, callEndOffset)) return@finishOnUiThread
-                ExpandedCalls.expand(editor, expansion.callRange, expansion.lines, indentPx(editor, expansion.callRange.startOffset))
+                ExpandedCalls.expand(editor, expansion.callRange, expansion.body, indentPx(editor, expansion.callRange.startOffset))
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
-    private class Expansion(val callRange: TextRange, val lines: List<String>)
+    private class Expansion(val callRange: TextRange, val body: FunctionBody)
 
     private fun findExpansion(editor: Editor, callEndOffset: Int): Expansion? {
         val project = editor.project ?: return null
@@ -66,8 +130,8 @@ class InlineCallMouseListener : EditorMouseListener {
             val call = CallTargets.toCall(element)
             if (call != null) {
                 val method = CallTargets.resolveProjectMethod(call) ?: return null
-                val lines = CallTargets.bodyLines(method) ?: return null
-                return Expansion(element.textRange, lines)
+                val body = CallTargets.body(method) ?: return null
+                return Expansion(element.textRange, body)
             }
             element = element.parent
         }

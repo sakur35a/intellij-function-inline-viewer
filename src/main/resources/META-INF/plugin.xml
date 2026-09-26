@@ -26,5 +26,6 @@
                 descriptionKey="inlay.inline.call.description"/>
 
         <editorFactoryMouseListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
+        <editorFactoryMouseMotionListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
     </extensions>
 </idea-plugin>
