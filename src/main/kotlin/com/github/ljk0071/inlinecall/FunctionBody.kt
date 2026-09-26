@@ -82,7 +82,12 @@ class FunctionBody(
     val hasBody: Boolean,
     /** [lines] 중 원본 줄 수. 그 뒤는 덧붙인 안내 줄(구현체/재정의 목록)이라 최대 줄 수로 자르지 않는다. */
     val sourceLineCount: Int = lines.size,
+    /** 구현체/재정의 목록 본문이면 몇 개까지 찾았는지(0 이면 목록이 아님)와 더 있는지. */
+    val resultLimit: Int = 0,
+    val hasMoreResults: Boolean = false,
 ) {
+    val isResultList: Boolean get() = resultLimit > 0
+
     val calls: Sequence<BodyCall> get() = lines.asSequence().flatMap { it.calls }
 
     /** 원본 문서가 그대로면 다시 계산할 필요가 없다. */
@@ -94,12 +99,20 @@ class FunctionBody(
          * [declaration] 의 원문을 렉서 하이라이팅과 함께 줄 단위 토큰으로 만든다. 읽기 작업 안에서 호출.
          * 앞쪽 문서 주석(Javadoc/KDoc)은 빼고, 선언부 들여쓰기만큼 공통 들여쓰기를 제거한다.
          */
-        fun of(declaration: PsiElement): FunctionBody? =
+        /**
+         * [analyzedLines] 는 문법(의미) 색과 중첩 힌트를 계산할 원본 줄 수. 기본은 설정의 최대 줄 수이고,
+         * "… more lines" 를 눌러 더 보여줄 때 늘린다.
+         */
+        fun of(declaration: PsiElement, analyzedLines: Int = InlineCallSettings.getInstance().state.maxLines): FunctionBody? =
             Perf.measure("body", detail = { "name=${(declaration as? PsiNamedElement)?.name} file=${declaration.containingFile?.name}" }) {
-                build(declaration)
+                build(declaration, analyzedLines)
             }
 
-        private fun build(declaration: PsiElement): FunctionBody? {
+        /** [old] 와 같은 종류(본문 / 구현체·재정의 목록)와 범위로 [declaration] 을 다시 만든다. 읽기 작업 안에서 호출. */
+        fun rebuildLike(old: FunctionBody, declaration: PsiElement, analyzedLines: Int): FunctionBody? =
+            if (old.isResultList) overridesOf(declaration, old.resultLimit) else of(declaration, analyzedLines)
+
+        private fun build(declaration: PsiElement, analyzedLines: Int): FunctionBody? {
             val psiFile = declaration.containingFile ?: return null
             val file = psiFile.virtualFile ?: return null
             val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
@@ -136,7 +149,7 @@ class FunctionBody(
                     .also { it.setText(chars.subSequence(start, end)) }
             }
 
-            val maxLines = InlineCallSettings.getInstance().state.maxLines
+            val maxLines = analyzedLines
             val lastVisibleLine = minOf(document.getLineNumber(start) + maxLines - 1, document.getLineNumber(end))
             val visibleEnd = minOf(document.getLineEndOffset(lastVisibleLine), end)
             val callEnds = Perf.measure("body.calls", detail = { "name=${(declaration as? PsiNamedElement)?.name}" }) {
@@ -198,8 +211,10 @@ class FunctionBody(
             val method = if (enumClass != null) null else declaration.toUElementOfType<UMethod>()?.takeIf { it.sourcePsi == declaration }
             val hasBody = method?.let { it.uastBody != null } ?: true
             val allLines = when {
-                !hasBody -> sourceLines + implementationLines(method?.javaPsi)
-                method != null && isOverridable(method.javaPsi) -> sourceLines + findOverridesLine(declaration)
+                // 구현체 검색은 계층 전체를 훑어 비싸므로(구현 114개에서 0.7초) 재정의처럼 클릭할 때만 한다.
+                // 최대 깊이에서도 "본문 없음" 은 알 수 있게 헤더 줄은 남긴다(힌트만 숨는다).
+                !hasBody -> sourceLines + findLine(declaration, "body.implementations", nestedOnly = false)
+                method != null && isOverridable(method.javaPsi) -> sourceLines + findLine(declaration, "body.overrides", nestedOnly = true)
                 else -> sourceLines
             }
             return FunctionBody(file, document.modificationStamp, allLines, target, hasBody, sourceLineCount = sourceLines.size)
@@ -209,17 +224,24 @@ class FunctionBody(
             SmartPointerManager.getInstance(element.project).createSmartPsiElementPointer(element)
 
         /**
-         * 재정의 목록만 담은 본문. "overrides: ▶ find" 를 클릭했을 때 한 단계 아래에 펼친다. 읽기 작업 안에서 호출.
-         * 재정의 검색은 계층 전체를 훑으므로 본문을 펼칠 때가 아니라 이 힌트를 클릭할 때만 한다.
+         * 구현체/재정의 목록만 담은 본문. "▶ find" 를 클릭했을 때 한 단계 아래에 펼친다. 읽기 작업 안에서 호출.
+         * 검색은 계층 전체를 훑으므로 본문을 펼칠 때가 아니라 클릭할 때만, [limit] 개까지 한다("… more" 로 늘린다).
          */
-        fun overridesOf(declaration: PsiElement): FunctionBody? {
-            val method = declaration.toUElementOfType<UMethod>()?.javaPsi ?: return null
+        fun overridesOf(declaration: PsiElement, limit: Int = RESULT_PAGE): FunctionBody? {
+            val uMethod = declaration.toUElementOfType<UMethod>() ?: return null
             val psiFile = declaration.containingFile ?: return null
             val file = psiFile.virtualFile ?: return null
             val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
-            val lines = overridingLines(method, header = null, emptyKey = "body.no.overrides", event = "body.overrides")
-            val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
-            return FunctionBody(file, document.modificationStamp, lines, target, hasBody = true, sourceLineCount = 0)
+            val abstract = uMethod.uastBody == null
+            val (lines, hasMore) = overridingLines(
+                uMethod.javaPsi, limit,
+                emptyKey = if (abstract) "body.no.implementations" else "body.no.overrides",
+                event = if (abstract) "body.impls" else "body.overrides",
+            )
+            return FunctionBody(
+                file, document.modificationStamp, lines, pointerTo(declaration), hasBody = true,
+                sourceLineCount = 0, resultLimit = limit, hasMoreResults = hasMore,
+            )
         }
 
         /** 재정의될 수 있는 인스턴스 메서드인지(인터페이스 default, final 아닌 클래스의 final 아닌 메서드, Kotlin open) */
@@ -236,49 +258,41 @@ class FunctionBody(
             }
         }
 
-        private fun findOverridesLine(declaration: PsiElement): BodyLine {
-            val pointer = SmartPointerManager.getInstance(declaration.project).createSmartPsiElementPointer(declaration)
-            val call = BodyCall(0, InlineCallBundle.message("body.find.overrides"), listOf(pointer), "overrides", searchesOverrides = true)
-            val header = BodyToken(InlineCallBundle.message("body.overrides"), 0, arrayOf(DefaultLanguageHighlighterColors.LINE_COMMENT), exact = false)
-            return BodyLine(listOf(header), listOf(call), nestedOnly = true)
+        /** "// <헤더> ▶ find": 클릭하면 구현체/재정의를 검색해 한 단계 아래에 펼친다. */
+        private fun findLine(declaration: PsiElement, headerKey: String, nestedOnly: Boolean): BodyLine {
+            val call = BodyCall(0, InlineCallBundle.message("body.find.overrides"), listOf(pointerTo(declaration)), "overrides", searchesOverrides = true)
+            val header = BodyToken(InlineCallBundle.message(headerKey), 0, arrayOf(DefaultLanguageHighlighterColors.LINE_COMMENT), exact = false)
+            return BodyLine(listOf(header), listOf(call), nestedOnly = nestedOnly)
         }
 
-        /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
-        private fun implementationLines(method: PsiMethod?): List<BodyLine> {
-            if (method == null) return listOf(note(InlineCallBundle.message("body.no.body")))
-            return overridingLines(method, header = "body.implementations", emptyKey = "body.no.implementations", event = "body.impls")
-        }
-
-        /** [method] 를 재정의/구현한 본문 있는 메서드마다 펼칠 수 있는 힌트 한 줄. */
-        private fun overridingLines(method: PsiMethod, header: String?, emptyKey: String, event: String): List<BodyLine> {
+        /** [method] 를 재정의/구현한 본문 있는 메서드마다 펼칠 수 있는 힌트 한 줄. [limit] 개까지 찾고, 더 있는지도 돌려준다. */
+        private fun overridingLines(method: PsiMethod, limit: Int, emptyKey: String, event: String): Pair<List<BodyLine>, Boolean> {
             val found = ArrayList<PsiMethod>()
-            Perf.measure(event, detail = { "name=${method.containingClass?.name}.${method.name} found=${found.size}" }) {
+            Perf.measure(event, detail = { "name=${method.containingClass?.name}.${method.name} limit=$limit found=${found.size}" }) {
                 OverridingMethodsSearch.search(method, GlobalSearchScope.projectScope(method.project), true)
-                    .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
+                    .forEach(Processor { found += it; found.size <= limit })
             }
-            val implementations = found.take(MAX_IMPLEMENTATIONS).filter {
+            val implementations = found.take(limit).filter {
                 CallTargets.isProjectDeclaration(it) && CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
             }
-            if (implementations.isEmpty()) return listOf(note(InlineCallBundle.message(emptyKey)))
+            if (implementations.isEmpty() && found.size <= limit) return listOf(note(InlineCallBundle.message(emptyKey))) to false
 
             val pointers = SmartPointerManager.getInstance(method.project)
-            val result = ArrayList<BodyLine>()
-            if (header != null) result += note(InlineCallBundle.message(header))
-            implementations.forEach { implementation ->
+            val lines = implementations.map { implementation ->
                 val label = (implementation.containingClass?.name ?: "<anonymous>") + "." + CallTargets.signatureOf(implementation)
                 val target = pointers.createSmartPsiElementPointer(CallTargets.declarationOf(implementation))
                 val call = BodyCall(0, label, listOf(target), "impl:$label")
-                result += BodyLine(listOf(BodyToken("    ", 0, emptyArray(), exact = false)), listOf(call), nestedOnly = true)
+                BodyLine(listOf(BodyToken("    ", 0, emptyArray(), exact = false)), listOf(call), nestedOnly = true)
             }
-            if (found.size > MAX_IMPLEMENTATIONS) result += note(InlineCallBundle.message("body.more.implementations"))
-            return result
+            return lines to (found.size > limit)
         }
 
         /** 주석 색으로 그리는 안내 줄 (원본 위치 없음) */
         private fun note(text: String) =
             BodyLine(listOf(BodyToken(text, 0, arrayOf(DefaultLanguageHighlighterColors.LINE_COMMENT), exact = false)))
 
-        private const val MAX_IMPLEMENTATIONS = 20
+        /** 구현체/재정의 목록을 한 번에 찾는 개수("… more" 를 누를 때마다 이만큼 늘린다) */
+        const val RESULT_PAGE = 20
 
         /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> (라벨, 대상 선언들). 힌트 규칙은 에디터 힌트와 같다. */
         private fun collectCalls(

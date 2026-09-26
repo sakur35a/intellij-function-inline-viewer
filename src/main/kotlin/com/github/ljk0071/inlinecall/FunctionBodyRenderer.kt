@@ -17,18 +17,29 @@ import java.awt.Graphics2D
 import java.awt.Point
 import java.awt.geom.Rectangle2D
 
-/** 펼쳐진 본문 하나. [children] 은 본문 안에서 다시 펼친 호출들(체인이면 호출 하나에 본문 여러 개). */
-class BodyNode(val body: FunctionBody, val depth: Int) {
+/**
+ * 펼쳐진 본문 하나. [children] 은 본문 안에서 다시 펼친 호출들(체인이면 호출 하나에 본문 여러 개).
+ * [extraLines] 는 "… more lines" 를 눌러 최대 줄 수보다 더 보여주는 줄 수.
+ */
+class BodyNode(body: FunctionBody, val depth: Int, extraLines: Int = 0) {
+    var body: FunctionBody = body
+        internal set
+    var extraLines: Int = extraLines
+        internal set
     val children = LinkedHashMap<BodyCall, List<BodyNode>>()
 }
 
 /** 다시 계산할 때 펼침 상태를 옮기기 위한 스냅샷. [BodyCall.key] 로 새 본문의 호출과 맞춘다. */
-class BodySnapshot(val body: FunctionBody, val children: Map<String, List<BodySnapshot>>)
+class BodySnapshot(val body: FunctionBody, val extraLines: Int, val children: Map<String, List<BodySnapshot>>)
+
+/** "더 보기" 줄의 종류 */
+enum class MoreKind { LINES, RESULTS }
 
 /** 렌더러 안에서 클릭된 대상 */
 sealed interface BodyHit {
     class Token(val node: BodyNode, val token: BodyToken, val sourceOffset: Int) : BodyHit
     class Call(val node: BodyNode, val call: BodyCall) : BodyHit
+    class More(val node: BodyNode, val kind: MoreKind) : BodyHit
 }
 
 /**
@@ -61,8 +72,17 @@ class FunctionBodyRenderer(
     /** Cmd 를 누른 채 마우스를 올린 토큰. 밑줄로 표시한다. EDT 에서만 바꾼다. */
     var hovered: BodyToken? = null
 
-    /** 한 줄: 본문의 한 줄이거나, 안내 문구(잘린 줄 수 / 본문 없음). [separator] 면 위에 구분선을 긋는다. */
-    private class Row(val node: BodyNode, val line: BodyLine?, val moreText: String?, val separator: Boolean = false)
+    /**
+     * 한 줄: 본문의 한 줄이거나, 클릭하면 더 불러오는 "… more" 안내([more]).
+     * [separator] 면 위에 구분선을 긋는다.
+     */
+    private class Row(
+        val node: BodyNode,
+        val line: BodyLine?,
+        val moreText: String?,
+        val separator: Boolean = false,
+        val more: MoreKind? = null,
+    )
 
     private sealed interface Piece {
         val x: Int
@@ -86,14 +106,19 @@ class FunctionBodyRenderer(
                     first = false
                     for (call in line.calls) node.children[call]?.let(::visit)
                 }
-                // 원본 줄만 최대 줄 수로 자르고, 덧붙인 안내 줄(구현체/재정의 목록)은 항상 보여준다.
+                // 원본 줄만 최대 줄 수(+ 더 보기로 늘린 만큼)로 자르고, 덧붙인 안내 줄(구현체/재정의 목록)은 항상 보여준다.
                 val source = body.lines.subList(0, body.sourceLineCount)
-                source.take(maxLines).forEach(::add)
-                if (source.size > maxLines) {
-                    result += Row(node, null, "… (${source.size - maxLines} more lines)", separator = first)
+                val shown = maxLines + node.extraLines
+                source.take(shown).forEach(::add)
+                if (source.size > shown) {
+                    val text = InlineCallBundle.message("body.more.lines", source.size - shown)
+                    result += Row(node, null, text, separator = first, more = MoreKind.LINES)
                     first = false
                 }
                 body.lines.subList(body.sourceLineCount, body.lines.size).forEach(::add)
+                if (body.hasMoreResults && canExpand(node)) {
+                    result += Row(node, null, "    " + InlineCallBundle.message("body.more.results"), more = MoreKind.RESULTS)
+                }
             }
         }
         visit(roots)
@@ -139,10 +164,33 @@ class FunctionBodyRenderer(
         changed()
     }
 
+    /** "… more lines" 를 한 번 누를 때 늘리는 줄 수(= 최대 줄 수) */
+    val linesPerPage: Int get() = maxLines
+
+    /**
+     * EDT 전용. "… more" 로 다시 계산한 본문으로 [node] 를 바꾼다. 펼쳐 둔 중첩 본문은 [BodyCall.key] 로 옮긴다.
+     * 호출 후 inlay.update() 필요.
+     */
+    fun replaceBody(node: BodyNode, body: FunctionBody, extraLines: Int): Boolean {
+        if (!contains(node)) return false
+        val oldChildren = node.children.entries.associate { (call, nodes) -> call.key to nodes }
+        node.children.clear()
+        for (call in body.calls) oldChildren[call.key]?.let { node.children[call] = it }
+        node.body = body
+        node.extraLines = extraLines
+        changed()
+        return true
+    }
+
+    private fun contains(target: BodyNode): Boolean {
+        fun visit(nodes: List<BodyNode>): Boolean = nodes.any { it === target || visit(it.children.values.flatten()) }
+        return visit(roots)
+    }
+
     /** EDT 전용. 현재 펼침 상태 스냅샷. */
     fun snapshot(): List<BodySnapshot> {
         fun snap(node: BodyNode): BodySnapshot =
-            BodySnapshot(node.body, node.children.entries.associate { (call, nodes) -> call.key to nodes.map(::snap) })
+            BodySnapshot(node.body, node.extraLines, node.children.entries.associate { (call, nodes) -> call.key to nodes.map(::snap) })
         return roots.map(::snap)
     }
 
@@ -301,6 +349,11 @@ class FunctionBodyRenderer(
         val editor = inlay.editor
         val bounds = inlay.bounds ?: return null
         val row = rows.getOrNull((point.y - bounds.y - verticalPadding).floorDiv(editor.lineHeight)) ?: return null
+        if (row.more != null && row.moreText != null) {
+            val left = textX(editor, bounds.x, row.node.depth)
+            val right = left + plainMetrics(editor).stringWidth(row.moreText)
+            return if (point.x in left until right) BodyHit.More(row.node, row.more) else null
+        }
         val piece = layout(editor, row, bounds.x).firstOrNull { point.x >= it.x && point.x < it.x + it.width } ?: return null
         return when (piece) {
             is Piece.Hint -> BodyHit.Call(row.node, piece.call)

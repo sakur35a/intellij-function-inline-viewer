@@ -186,8 +186,13 @@ object ExpandedCalls {
             load: (PsiElement) -> FunctionBody? = FunctionBody::of,
         ): BodyNode? {
             val reusable = old?.body?.takeIf { !force && it.isUpToDate() && it.target.element == declaration }
-            val body = reusable ?: load(declaration) ?: return null
-            val node = BodyNode(body, depth)
+            // "… more" 로 늘린 줄 수/목록 개수는 다시 계산해도 유지한다.
+            val extraLines = old?.extraLines ?: 0
+            val body = reusable
+                ?: old?.let { FunctionBody.rebuildLike(it.body, declaration, InlineCallSettings.getInstance().state.maxLines + extraLines) }
+                ?: load(declaration)
+                ?: return null
+            val node = BodyNode(body, depth, extraLines)
             if (old == null) return node
             for (call in body.calls) {
                 val oldChildren = old.children[call.key] ?: continue

@@ -275,7 +275,12 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         val body = CallTargets.body(method)!!
         assertFalse(body.hasBody)
         val renderer = FunctionBodyRenderer(listOf(body), indentPx = 0)
-        assertEquals(listOf("int size();", InlineCallBundle.message("body.no.implementations")), renderer.visibleText())
+        // 구현체 검색은 "find" 를 누를 때만 한다.
+        assertEquals(listOf("int size();", InlineCallBundle.message("body.implementations")), renderer.visibleText())
+        val root = renderer.roots.single()
+        val find = root.body.calls.single()
+        assertTrue(renderer.expand(root, find, inBackground { find.targets.mapNotNull { it.element?.let(find::load) } }))
+        assertEquals("\t" + InlineCallBundle.message("body.no.implementations"), renderer.visibleText().last())
     }
 
     fun testInterfaceMethodListsImplementationsAndExpandsThem() {
@@ -310,17 +315,21 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         val root = renderer.roots.single()
         assertFalse(root.body.hasBody)
 
-        // 본문이 있는 구현체만 나온다(추상 Base 는 빠짐). 검색 순서는 보장되지 않으므로 정렬해서 비교한다.
-        val lines = renderer.visibleText()
-        assertEquals("double area();", lines[0])
-        assertEquals(InlineCallBundle.message("body.implementations"), lines[1])
-        val labels = root.body.calls.map { it.label }.sorted().toList()
-        assertEquals(listOf("Circle.area()", "Square.area()", "Tri.area()"), labels)
+        // 펼친 직후에는 검색하지 않고 "▶ find" 만 있다.
+        assertEquals(listOf("double area();", InlineCallBundle.message("body.implementations")), renderer.visibleText())
+        val find = root.body.calls.single()
+        assertTrue(renderer.expand(root, find, inBackground { find.targets.mapNotNull { it.element?.let(find::load) } }))
+        val list = root.children.getValue(find).single()
 
-        // 구현체 힌트를 펼치면 그 본문이 한 단계 아래에 보인다(Kotlin 구현체 포함).
-        val tri = root.body.calls.single { it.label == "Tri.area()" }
-        assertTrue(renderer.expand(root, tri, inBackground { tri.targets.map { FunctionBody.of(it.element!!)!! } }))
-        assertTrue(renderer.visibleText().contains("\toverride fun area(): Double = 0.5"))
+        // 본문이 있는 구현체만 나온다(추상 Base 는 빠짐). 검색 순서는 보장되지 않으므로 정렬해서 비교한다.
+        val labels = list.body.calls.map { it.label }.sorted().toList()
+        assertEquals(listOf("Circle.area()", "Square.area()", "Tri.area()"), labels)
+        assertFalse(list.body.hasMoreResults)
+
+        // 구현체 힌트를 펼치면 그 본문이 한 단계 더 아래에 보인다(Kotlin 구현체 포함).
+        val tri = list.body.calls.single { it.label == "Tri.area()" }
+        assertTrue(renderer.expand(list, tri, inBackground { tri.targets.map { FunctionBody.of(it.element!!)!! } }))
+        assertTrue(renderer.visibleText().contains("\t\toverride fun area(): Double = 0.5"))
     }
 
     fun testDefaultMethodOffersLazyOverridesSearch() {
@@ -373,6 +382,72 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         )
         val renderer = expandCallEndingWith("helper()")
         assertEquals(listOf("int helper() { return 1; }"), renderer.visibleText())
+    }
+
+    /** 구현체 목록은 한 페이지씩 찾고, "… more" 로 더 불러온다. */
+    fun testImplementationsArePaged() {
+        myFixture.configureByText(
+            "S.java",
+            """
+            interface S { int size(); }
+            class A implements S { public int size() { return 1; } }
+            class B implements S { public int size() { return 2; } }
+            class C implements S { public int size() { return 3; } }
+            """.trimIndent(),
+        )
+        val method = (myFixture.file as PsiJavaFile).classes.first().methods.single()
+        val firstPage = inBackground { FunctionBody.overridesOf(method, limit = 2)!! }
+        assertEquals(2, firstPage.calls.count())
+        assertTrue(firstPage.hasMoreResults)
+
+        val renderer = FunctionBodyRenderer(listOf(firstPage), indentPx = 0)
+        assertEquals("    " + InlineCallBundle.message("body.more.results"), renderer.visibleText().last())
+
+        val secondPage = inBackground { FunctionBody.overridesOf(method, limit = 4)!! }
+        assertTrue(renderer.replaceBody(renderer.roots.single(), secondPage, extraLines = 0))
+        assertEquals(3, renderer.roots.single().body.calls.count())
+        assertFalse(renderer.visibleText().last().contains(InlineCallBundle.message("body.more.results")))
+    }
+
+    /** "… more lines" 는 줄을 더 보여주고, 새로 보이는 줄에도 중첩 힌트가 계산되며, 다시 계산돼도 유지된다. */
+    fun testMoreLinesRevealsAnalyzedLines() {
+        InlineCallSettings.getInstance().state.maxLines = 2
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                int helper(int x) { return x; }
+                int caller() {
+                    int a = 1;
+                    int b = helper(a);
+                    return b;
+                }
+                int v = caller();
+            }
+            """.trimIndent(),
+        )
+        val renderer = expandCallEndingWith("caller()")
+        val root = renderer.roots.single()
+        assertEquals(listOf("int caller() {", "    int a = 1;", InlineCallBundle.message("body.more.lines", 3)), renderer.visibleText())
+        assertTrue("calls beyond visible lines are not resolved yet", root.body.calls.none())
+
+        val caller = (myFixture.file as PsiJavaFile).classes.single().findMethodsByName("caller", false).single()
+        val more = FunctionBody.of(caller, analyzedLines = renderer.linesPerPage * 2)!!
+        assertTrue(renderer.replaceBody(root, more, extraLines = renderer.linesPerPage))
+        assertEquals(
+            listOf("int caller() {", "    int a = 1;", "    int b = helper(a);", "    return b;", InlineCallBundle.message("body.more.lines", 1)),
+            renderer.visibleText(),
+        )
+        assertEquals(listOf("helper(x)"), root.body.calls.map { it.label }.toList())
+
+        // 원본이 바뀌어 다시 계산돼도 늘린 줄 수는 유지된다.
+        val document = myFixture.editor.document
+        edit { document.replaceString(document.text.indexOf("int a = 1;"), document.text.indexOf("int a = 1;") + "int a = 1;".length, "int a = 2;") }
+        ExpandedCalls.refreshNow(myFixture.editor)
+        val refreshed = renderers().single()
+        assertEquals(4 + 1, refreshed.visibleText().size)
+        assertEquals("    int a = 2;", refreshed.visibleText()[1])
+        assertEquals(listOf("helper(x)"), refreshed.roots.single().body.calls.map { it.label }.toList())
     }
 
     fun testImplementationLinesHiddenAtMaxDepth() {

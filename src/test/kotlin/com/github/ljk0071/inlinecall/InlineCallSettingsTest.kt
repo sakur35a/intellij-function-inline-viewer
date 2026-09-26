@@ -47,7 +47,7 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
 
         val renderer = editor.inlayModel.getBlockElementsInRange(0, editor.document.textLength)
             .single().renderer as FunctionBodyRenderer
-        assertEquals(listOf("int helper(int x) {", "    int y = x + 1;", "… (2 more lines)"), renderer.visibleText())
+        assertEquals(listOf("int helper(int x) {", "    int y = x + 1;", InlineCallBundle.message("body.more.lines", 2)), renderer.visibleText())
         // maxDepth = 0 이면 본문 안의 호출도 펼칠 수 없다.
         assertFalse(renderer.expand(renderer.roots.single(), BodyCall(0, "x", listOf(SmartPointerManager.createPointer<PsiElement>(helper)), "x#1"), listOf(CallTargets.body(helper)!!)))
     }
@@ -92,8 +92,8 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
                 "    return n <= 1 ? 1 : n * fact(n - 1);",
                 "\tint fact(int n) {",
                 "\t    return n <= 1 ? 1 : n * fact(n - 1);",
-                "\t… (1 more lines)",
-                "… (1 more lines)",
+                "\t" + InlineCallBundle.message("body.more.lines", 1),
+                InlineCallBundle.message("body.more.lines", 1),
             ),
             renderer.visibleText(),
         )
@@ -165,7 +165,7 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
         val run = (myFixture.file as PsiJavaFile).classes.first().findMethodsByName("run", false).single()
         val renderer = FunctionBodyRenderer(listOf(CallTargets.body(run)!!), indentPx = 0, maxLines = 2)
         assertEquals(
-            listOf("int run(int x) {", "    int a = x;", "… (3 more lines)", InlineCallBundle.message("body.overrides")),
+            listOf("int run(int x) {", "    int a = x;", InlineCallBundle.message("body.more.lines", 3), InlineCallBundle.message("body.overrides")),
             renderer.visibleText(),
         )
     }
