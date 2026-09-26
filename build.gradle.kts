@@ -151,6 +151,14 @@ intellijPlatform {
         }
     }
 
+    signing {
+        // 플러그인 서명. 인증서 체인과 개인 키는 Base64 로 인코딩한 값을 환경 변수로 받는다(signPlugin 이 디코딩한다).
+        // 값이 없으면 signPlugin 은 건너뛰고 publishPlugin 은 서명하지 않은 zip 을 올린다.
+        certificateChain = providers.environmentVariable("CERTIFICATE_CHAIN")
+        privateKey = providers.environmentVariable("PRIVATE_KEY")
+        password = providers.environmentVariable("PRIVATE_KEY_PASSWORD")
+    }
+
     publishing {
         // 업로드용 토큰은 환경 변수 PUBLISH_TOKEN 으로만 받는다(코드/저장소에 두지 않는다).
         token = providers.environmentVariable("PUBLISH_TOKEN")
