@@ -16,6 +16,7 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiJavaFile
 import com.intellij.testFramework.LightProjectDescriptor
+import com.intellij.util.ui.JBUI
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
 import com.intellij.testFramework.utils.inlays.declarative.DeclarativeInlayHintsProviderTestCase
 
@@ -448,6 +449,49 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertEquals(4 + 1, refreshed.visibleText().size)
         assertEquals("    int a = 2;", refreshed.visibleText()[1])
         assertEquals(listOf("helper(x)"), refreshed.roots.single().body.calls.map { it.label }.toList())
+    }
+
+    /** 더 보기 줄의 [next N] / [all] 버튼이 각각 클릭되는지(실제 에디터 inlay 위에서 판정) */
+    fun testMoreRowHasNextAndAllButtons() {
+        InlineCallSettings.getInstance().state.maxLines = 2
+        myFixture.configureByText(
+            "A.java",
+            "class A {\n    int caller() {\n        int a = 1;\n        int b = 2;\n        int c = 3;\n        return a + b + c;\n    }\n    int v = caller();\n}\n",
+        )
+        val renderer = expandCallEndingWith("caller()")
+        val inlay = myFixture.editor.inlayModel.getBlockElementsInRange(0, myFixture.editor.document.textLength).single()
+        val bounds = inlay.bounds!!
+        val lastRowY = bounds.y + bounds.height - JBUI.scale(2) - myFixture.editor.lineHeight / 2
+        val hits = (bounds.x until bounds.x + bounds.width)
+            .mapNotNull { x -> renderer.hitTest(inlay, Point(x, lastRowY)) as? BodyHit.More }
+            .map { it.action.kind to it.action.all }
+            .distinct()
+        assertEquals(listOf(MoreKind.LINES to false, MoreKind.LINES to true), hits)
+        assertEquals(InlineCallBundle.message("body.more.lines", 4), renderer.visibleText().last())
+
+        // [all]: 남은 줄을 모두 보여준다(리스너와 같은 계산).
+        val root = renderer.roots.single()
+        val all = FunctionBody.of(root.body.target.element!!, root.body.sourceLineCount)!!
+        assertTrue(renderer.replaceBody(root, all, extraLines = root.body.sourceLineCount - renderer.linesPerPage))
+        assertEquals(6, renderer.visibleText().size)
+        assertEquals("}", renderer.visibleText().last())
+    }
+
+    fun testLoadAllImplementations() {
+        myFixture.configureByText(
+            "S.java",
+            """
+            interface S { int size(); }
+            class A implements S { public int size() { return 1; } }
+            class B implements S { public int size() { return 2; } }
+            class C implements S { public int size() { return 3; } }
+            """.trimIndent(),
+        )
+        val method = (myFixture.file as PsiJavaFile).classes.first().methods.single()
+        assertTrue(inBackground { FunctionBody.overridesOf(method, limit = 1)!! }.hasMoreResults)
+        val all = inBackground { FunctionBody.overridesOf(method, FunctionBody.ALL_RESULTS)!! }
+        assertEquals(3, all.calls.count())
+        assertFalse(all.hasMoreResults)
     }
 
     fun testImplementationLinesHiddenAtMaxDepth() {

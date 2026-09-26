@@ -35,11 +35,14 @@ class BodySnapshot(val body: FunctionBody, val extraLines: Int, val children: Ma
 /** "더 보기" 줄의 종류 */
 enum class MoreKind { LINES, RESULTS }
 
+/** "더 보기" 줄의 버튼: 한 페이지 더([all] = false) 또는 전체 */
+class MoreAction(val kind: MoreKind, val all: Boolean)
+
 /** 렌더러 안에서 클릭된 대상 */
 sealed interface BodyHit {
     class Token(val node: BodyNode, val token: BodyToken, val sourceOffset: Int) : BodyHit
     class Call(val node: BodyNode, val call: BodyCall) : BodyHit
-    class More(val node: BodyNode, val kind: MoreKind) : BodyHit
+    class More(val node: BodyNode, val action: MoreAction) : BodyHit
 }
 
 /**
@@ -90,11 +93,17 @@ class FunctionBodyRenderer(
 
         class Text(val token: BodyToken, val attrs: TextAttributes?, override val x: Int, override val width: Int) : Piece
         class Hint(val call: BodyCall, val text: String, override val x: Int, override val width: Int) : Piece
+        class Label(val text: String, override val x: Int, override val width: Int) : Piece
+        class Action(val action: MoreAction, val text: String, override val x: Int, override val width: Int) : Piece
     }
+
+    /** "… more lines" 줄의 남은 줄 수([MoreAction] "next N" 라벨용). flatten 때 채운다. */
+    private val remainingLines = HashMap<BodyNode, Int>()
 
     private var rows: List<Row> = flatten()
 
     private fun flatten(): List<Row> {
+        remainingLines.clear()
         val result = ArrayList<Row>()
         fun visit(nodes: List<BodyNode>) {
             nodes.forEachIndexed { index, node ->
@@ -112,6 +121,7 @@ class FunctionBodyRenderer(
                 source.take(shown).forEach(::add)
                 if (source.size > shown) {
                     val text = InlineCallBundle.message("body.more.lines", source.size - shown)
+                    remainingLines[node] = source.size - shown
                     result += Row(node, null, text, separator = first, more = MoreKind.LINES)
                     first = false
                 }
@@ -243,6 +253,7 @@ class FunctionBodyRenderer(
         editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.INLAY_DEFAULT)
 
     private fun layout(editor: Editor, row: Row, inlayX: Int): List<Piece> {
+        if (row.more != null && row.moreText != null) return moreLayout(editor, row, row.more, row.moreText, inlayX)
         val line = row.line ?: return emptyList()
         val pieces = ArrayList<Piece>()
         var x = textX(editor, inlayX, row.node.depth)
@@ -266,12 +277,30 @@ class FunctionBodyRenderer(
         return pieces
     }
 
+    /** "… 64 more lines  [next 30] [all]" */
+    private fun moreLayout(editor: Editor, row: Row, kind: MoreKind, text: String, inlayX: Int): List<Piece> {
+        val metrics = plainMetrics(editor)
+        var x = textX(editor, inlayX, row.node.depth)
+        val pieces = ArrayList<Piece>()
+        pieces += Piece.Label(text, x, metrics.stringWidth(text))
+        x += metrics.stringWidth(text) + gap
+        val page = when (kind) {
+            MoreKind.LINES -> minOf(maxLines, remainingLines[row.node] ?: maxLines)
+            MoreKind.RESULTS -> FunctionBody.RESULT_PAGE
+        }
+        for (action in listOf(MoreAction(kind, all = false), MoreAction(kind, all = true))) {
+            val label = if (action.all) InlineCallBundle.message("body.more.all") else InlineCallBundle.message("body.more.next", page)
+            val width = metrics.stringWidth(label) + hintPadding * 2
+            pieces += Piece.Action(action, label, x, width)
+            x += width + hintPadding
+        }
+        return pieces
+    }
+
     override fun calcWidthInPixels(inlay: Inlay<*>): Int {
         val editor = inlay.editor
         val right = rows.maxOfOrNull { row ->
-            row.moreText?.let { textX(editor, 0, row.node.depth) + plainMetrics(editor).stringWidth(it) }
-                ?: layout(editor, row, 0).lastOrNull()?.let { it.x + it.width }
-                ?: 0
+            layout(editor, row, 0).lastOrNull()?.let { it.x + it.width } ?: 0
         } ?: 0
         return right + gap
     }
@@ -316,11 +345,6 @@ class FunctionBodyRenderer(
                 g.fillRect(left, rowY, (calcWidthInPixels(inlay) - (left - x)).coerceAtLeast(0), JBUI.scale(1))
             }
 
-            row.moreText?.let {
-                g.font = font(editor, null)
-                g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.5)
-                g.drawString(it, textX(editor, x, row.node.depth), baseline)
-            }
             for (piece in layout(editor, row, x)) {
                 when (piece) {
                     is Piece.Text -> {
@@ -329,19 +353,30 @@ class FunctionBodyRenderer(
                         g.drawString(piece.token.text, piece.x, baseline)
                         if (piece.token === hovered) g.fillRect(piece.x, baseline + JBUI.scale(1), piece.width, JBUI.scale(1))
                     }
-                    is Piece.Hint -> {
-                        hintAttrs?.backgroundColor?.let {
-                            g.color = it
-                            val arc = JBUI.scale(6)
-                            g.fillRoundRect(piece.x, rowY + JBUI.scale(1), piece.width, lineHeight - JBUI.scale(2), arc, arc)
-                        }
+                    is Piece.Hint -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline)
+                    is Piece.Action -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline)
+                    is Piece.Label -> {
                         g.font = font(editor, null)
-                        g.color = hintAttrs?.foregroundColor ?: JBColor.GRAY
-                        g.drawString(piece.text, piece.x + hintPadding, baseline)
+                        g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.5)
+                        g.drawString(piece.text, piece.x, baseline)
                     }
                 }
             }
         }
+    }
+
+    /** 클릭할 수 있는 조각(본문 안 ▶ 힌트, 더 보기 버튼)은 인레이 힌트처럼 둥근 배경 위에 그린다. */
+    private fun drawPill(g: Graphics2D, editor: Editor, text: String, x: Int, width: Int, rowY: Int, baseline: Int) {
+        val hintAttrs = hintAttributes(editor)
+        val lineHeight = editor.lineHeight
+        hintAttrs?.backgroundColor?.let {
+            g.color = it
+            val arc = JBUI.scale(6)
+            g.fillRoundRect(x, rowY + JBUI.scale(1), width, lineHeight - JBUI.scale(2), arc, arc)
+        }
+        g.font = font(editor, null)
+        g.color = hintAttrs?.foregroundColor ?: JBColor.GRAY
+        g.drawString(text, x + hintPadding, baseline)
     }
 
     /** [point](에디터 content 좌표) 아래의 토큰 또는 호출 힌트. 없으면 null. */
@@ -349,14 +384,11 @@ class FunctionBodyRenderer(
         val editor = inlay.editor
         val bounds = inlay.bounds ?: return null
         val row = rows.getOrNull((point.y - bounds.y - verticalPadding).floorDiv(editor.lineHeight)) ?: return null
-        if (row.more != null && row.moreText != null) {
-            val left = textX(editor, bounds.x, row.node.depth)
-            val right = left + plainMetrics(editor).stringWidth(row.moreText)
-            return if (point.x in left until right) BodyHit.More(row.node, row.more) else null
-        }
         val piece = layout(editor, row, bounds.x).firstOrNull { point.x >= it.x && point.x < it.x + it.width } ?: return null
         return when (piece) {
             is Piece.Hint -> BodyHit.Call(row.node, piece.call)
+            is Piece.Action -> BodyHit.More(row.node, piece.action)
+            is Piece.Label -> null
             is Piece.Text -> {
                 val fm = editor.contentComponent.getFontMetrics(font(editor, piece.attrs))
                 val text = piece.token.text

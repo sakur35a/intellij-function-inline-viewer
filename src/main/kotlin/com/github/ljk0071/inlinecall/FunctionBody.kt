@@ -294,6 +294,9 @@ class FunctionBody(
         /** 구현체/재정의 목록을 한 번에 찾는 개수("… more" 를 누를 때마다 이만큼 늘린다) */
         const val RESULT_PAGE = 20
 
+        /** "all" 로 불러올 때의 상한(계층이 비정상적으로 큰 경우 대비) */
+        const val ALL_RESULTS = 10_000
+
         /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> (라벨, 대상 선언들). 힌트 규칙은 에디터 힌트와 같다. */
         private fun collectCalls(
             declaration: PsiElement,

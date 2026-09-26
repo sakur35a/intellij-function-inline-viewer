@@ -48,7 +48,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             // 본문 안의 ▶ 힌트를 Cmd+클릭하면 대상 선언(구현체 목록이면 그 구현체)으로 이동한다.
             navigation && hit is BodyHit.Call -> navigateTo(e.editor, hit.call)
             !navigation && hit is BodyHit.Call -> toggleNested(e.editor, inlay, renderer, hit.node, hit.call)
-            !navigation && hit is BodyHit.More -> loadMore(e.editor, inlay, renderer, hit.node, hit.kind)
+            !navigation && hit is BodyHit.More -> loadMore(e.editor, inlay, renderer, hit.node, hit.action)
             !navigation -> return
         }
         // 본문 아래에 깔린 실제 코드로 이동하거나 캐럿이 움직이지 않도록 이 클릭은 소비한다.
@@ -103,17 +103,28 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             .submit(AppExecutorUtil.getAppExecutorService())
     }
 
-    /** "… more lines" 는 최대 줄 수만큼 더, "… more" 는 구현체/재정의를 한 페이지 더 불러온다(백그라운드에서 다시 계산). */
-    private fun loadMore(editor: Editor, inlay: Inlay<*>, renderer: FunctionBodyRenderer, node: BodyNode, kind: MoreKind) {
+    /**
+     * "… more lines" 는 최대 줄 수만큼 더(또는 전체), "… more" 는 구현체/재정의를 한 페이지 더(또는 전체) 불러온다.
+     * 새로 보이는 줄의 색/중첩 힌트도 계산해야 하므로 백그라운드에서 본문을 다시 만든다.
+     */
+    private fun loadMore(editor: Editor, inlay: Inlay<*>, renderer: FunctionBodyRenderer, node: BodyNode, action: MoreAction) {
         val project = editor.project ?: return
         val body = node.body
-        val extraLines = if (kind == MoreKind.LINES) node.extraLines + renderer.linesPerPage else node.extraLines
+        val page = renderer.linesPerPage
+        val extraLines = when {
+            action.kind != MoreKind.LINES -> node.extraLines
+            action.all -> maxOf(body.sourceLineCount - page, node.extraLines)
+            else -> node.extraLines + page
+        }
         val start = System.nanoTime()
         ReadAction.nonBlocking<FunctionBody?> {
             val target = body.target.element ?: return@nonBlocking null
-            when (kind) {
-                MoreKind.LINES -> FunctionBody.of(target, renderer.linesPerPage + extraLines)
-                MoreKind.RESULTS -> FunctionBody.overridesOf(target, body.resultLimit + FunctionBody.RESULT_PAGE)
+            when (action.kind) {
+                MoreKind.LINES -> FunctionBody.of(target, page + extraLines)
+                MoreKind.RESULTS -> FunctionBody.overridesOf(
+                    target,
+                    if (action.all) FunctionBody.ALL_RESULTS else body.resultLimit + FunctionBody.RESULT_PAGE,
+                )
             }
         }
             .inSmartMode(project)
@@ -121,7 +132,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             .expireWhen { !inlay.isValid }
             .finishOnUiThread(ModalityState.defaultModalityState()) { newBody ->
                 if (newBody != null && renderer.replaceBody(node, newBody, extraLines)) inlay.update()
-                Perf.since("more", start, "kind=$kind")
+                Perf.since("more", start, "kind=${action.kind} all=${action.all}")
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
