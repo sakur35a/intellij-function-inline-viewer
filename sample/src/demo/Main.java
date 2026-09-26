@@ -19,7 +19,8 @@ public class Main {
         String text2 = new Builder()
                 .add("b")
                 .build();
-        // 인터페이스 메서드: 펼치면 선언과 "(no body …)" 만 보인다.
+        // 인터페이스 메서드: 펼치면 선언 아래에 구현체 목록(▶ Circle.area(), ▶ Square.area())이 보인다.
+        // 람다 구현(아래 () -> 1.0)은 목록에 나오지 않는다.
         Shape shape = () -> 1.0;
         double area = shape.area();
 

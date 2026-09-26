@@ -177,8 +177,13 @@ object CallTargets {
                 it is PsiNameIdentifierOwner && it.nameIdentifier?.textRange?.contains(offset) == true
             }
             ?: return null
-        val navigation = target.navigationElement
+        return descriptorOf(target)
+    }
+
+    /** [element] 선언 위치로 이동하는 Navigatable. 읽기 작업 안에서 호출. */
+    fun descriptorOf(element: PsiElement): Navigatable? {
+        val navigation = element.navigationElement
         val file = navigation.containingFile?.virtualFile ?: return null
-        return OpenFileDescriptor(project, file, navigation.textOffset)
+        return OpenFileDescriptor(element.project, file, navigation.textOffset)
     }
 }

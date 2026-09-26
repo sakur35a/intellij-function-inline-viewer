@@ -79,11 +79,11 @@ class FunctionBodyRenderer(
             nodes.forEachIndexed { index, node ->
                 val lines = node.body.lines
                 lines.take(maxLines).forEachIndexed { lineIndex, line ->
+                    if (line.nestedOnly && !canExpand(node)) return@forEachIndexed
                     result += Row(node, line, null, separator = index > 0 && lineIndex == 0)
                     for (call in line.calls) node.children[call]?.let(::visit)
                 }
                 if (lines.size > maxLines) result += Row(node, null, "… (${lines.size - maxLines} more lines)")
-                if (!node.body.hasBody) result += Row(node, null, InlineCallBundle.message("body.no.body"))
             }
         }
         visit(roots)

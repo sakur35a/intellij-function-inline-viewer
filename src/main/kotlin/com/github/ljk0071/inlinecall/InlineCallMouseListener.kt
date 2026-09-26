@@ -10,6 +10,7 @@ import com.intellij.openapi.editor.event.EditorMouseEventArea
 import com.intellij.openapi.editor.event.EditorMouseListener
 import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.ex.EditorEx
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.TextRange
 import com.intellij.pom.Navigatable
@@ -37,6 +38,8 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         val hit = renderer.hitTest(inlay, e.mouseEvent.point)
         when {
             navigation && hit is BodyHit.Token && hit.token.isNavigable -> navigate(e.editor, hit.node.body, hit.sourceOffset)
+            // 본문 안의 ▶ 힌트를 Cmd+클릭하면 대상 선언(구현체 목록이면 그 구현체)으로 이동한다.
+            navigation && hit is BodyHit.Call -> navigateTo(e.editor, hit.call)
             !navigation && hit is BodyHit.Call -> toggleNested(e.editor, inlay, renderer, hit.node, hit.call)
             !navigation -> return
         }
@@ -50,7 +53,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         val hit = renderer?.hitTest(inlay, e.mouseEvent.point)
         val navigation = isNavigationModifier(e.mouseEvent)
         val token = (hit as? BodyHit.Token)?.token?.takeIf { navigation && it.isNavigable }
-        val clickable = token != null || (!navigation && hit is BodyHit.Call)
+        val clickable = token != null || hit is BodyHit.Call
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
         if (renderer == null) return
@@ -94,8 +97,16 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         if (SystemInfo.isMac) event.isMetaDown else event.isControlDown
 
     private fun navigate(editor: Editor, body: FunctionBody, offset: Int) {
+        navigate(editor) { project -> CallTargets.navigationTarget(project, body, offset) }
+    }
+
+    private fun navigateTo(editor: Editor, call: BodyCall) {
+        navigate(editor) { call.targets.firstNotNullOfOrNull { it.element }?.let(CallTargets::descriptorOf) }
+    }
+
+    private fun navigate(editor: Editor, target: (Project) -> Navigatable?) {
         val project = editor.project ?: return
-        ReadAction.nonBlocking<Navigatable?> { CallTargets.navigationTarget(project, body, offset) }
+        ReadAction.nonBlocking<Navigatable?> { target(project) }
             .expireWith(project)
             .finishOnUiThread(ModalityState.defaultModalityState()) { target ->
                 if (target != null && target.canNavigate()) target.navigate(true)

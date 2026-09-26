@@ -8,6 +8,10 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiMethod
+import com.intellij.psi.search.GlobalSearchScope
+import com.intellij.psi.search.searches.OverridingMethodsSearch
+import com.intellij.util.Processor
 import com.intellij.psi.PsiWhiteSpace
 import com.intellij.psi.SmartPointerManager
 import com.intellij.psi.SmartPsiElementPointer
@@ -46,7 +50,8 @@ class BodyCall(
     val key: String,
 )
 
-class BodyLine(val tokens: List<BodyToken>, val calls: List<BodyCall> = emptyList()) {
+/** [nestedOnly] 면 더 펼칠 수 없는 깊이(최대 깊이)에서는 줄 자체를 숨긴다(구현체 목록처럼 힌트만 있는 줄). */
+class BodyLine(val tokens: List<BodyToken>, val calls: List<BodyCall> = emptyList(), val nestedOnly: Boolean = false) {
     val text: String get() = tokens.joinToString("") { it.text }
 }
 
@@ -121,9 +126,40 @@ class FunctionBody(
                 BodyLine(trimmed, calls.filter { it.afterToken >= 0 })
             }
             val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
-            val hasBody = declaration.toUElementOfType<UMethod>()?.let { it.uastBody != null } ?: true
-            return FunctionBody(file, document.modificationStamp, lines, target, hasBody)
+            val method = declaration.toUElementOfType<UMethod>()
+            val hasBody = method?.let { it.uastBody != null } ?: true
+            val allLines = if (hasBody) lines else lines + implementationLines(method?.javaPsi)
+            return FunctionBody(file, document.modificationStamp, allLines, target, hasBody)
         }
+
+        /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
+        private fun implementationLines(method: PsiMethod?): List<BodyLine> {
+            if (method == null) return listOf(note(InlineCallBundle.message("body.no.body")))
+            val found = ArrayList<PsiMethod>()
+            OverridingMethodsSearch.search(method, GlobalSearchScope.projectScope(method.project), true)
+                .forEach(Processor { found += it; found.size <= MAX_IMPLEMENTATIONS })
+            val implementations = found.take(MAX_IMPLEMENTATIONS).filter {
+                CallTargets.declarationOf(it).toUElementOfType<UMethod>()?.uastBody != null
+            }
+            if (implementations.isEmpty()) return listOf(note(InlineCallBundle.message("body.no.implementations")))
+
+            val pointers = SmartPointerManager.getInstance(method.project)
+            val result = arrayListOf(note(InlineCallBundle.message("body.implementations")))
+            implementations.forEach { implementation ->
+                val label = (implementation.containingClass?.name ?: "<anonymous>") + "." + CallTargets.signatureOf(implementation)
+                val target = pointers.createSmartPsiElementPointer(CallTargets.declarationOf(implementation))
+                val call = BodyCall(0, label, listOf(target), "impl:$label")
+                result += BodyLine(listOf(BodyToken("    ", 0, emptyArray(), exact = false)), listOf(call), nestedOnly = true)
+            }
+            if (found.size > MAX_IMPLEMENTATIONS) result += note(InlineCallBundle.message("body.more.implementations"))
+            return result
+        }
+
+        /** 주석 색으로 그리는 안내 줄 (원본 위치 없음) */
+        private fun note(text: String) =
+            BodyLine(listOf(BodyToken(text, 0, arrayOf(DefaultLanguageHighlighterColors.LINE_COMMENT), exact = false)))
+
+        private const val MAX_IMPLEMENTATIONS = 20
 
         /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> (라벨, 대상 선언들). 힌트 규칙은 에디터 힌트와 같다. */
         private fun collectCalls(

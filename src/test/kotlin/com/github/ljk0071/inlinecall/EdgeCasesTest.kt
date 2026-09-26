@@ -1,5 +1,7 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.editor.EditorFactory
 import com.intellij.openapi.util.TextRange
@@ -138,7 +140,65 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         val body = CallTargets.body(method)!!
         assertFalse(body.hasBody)
         val renderer = FunctionBodyRenderer(listOf(body), indentPx = 0)
-        assertEquals(listOf("int size();", InlineCallBundle.message("body.no.body")), renderer.visibleText())
+        assertEquals(listOf("int size();", InlineCallBundle.message("body.no.implementations")), renderer.visibleText())
+    }
+
+    fun testInterfaceMethodListsImplementationsAndExpandsThem() {
+        myFixture.addFileToProject(
+            "demo/Shapes.java",
+            """
+            package demo;
+            interface Shape { double area(); }
+            abstract class Base implements Shape { public abstract double area(); }
+            class Circle extends Base { public double area() { return 3.0; } }
+            class Square implements Shape { public double area() { return 4.0; } }
+            """.trimIndent(),
+        )
+        myFixture.addFileToProject(
+            "demo/Tri.kt",
+            """
+            package demo
+            class Tri : Shape {
+                override fun area(): Double = 0.5
+            }
+            """.trimIndent(),
+        )
+        myFixture.configureByText("Main.java", "package demo;\nclass Main {\n    double v(Shape s) { return s.area(); }\n}\n")
+        // Kotlin(K2) 구현체 검색은 EDT 에서 금지되므로 실제 코드처럼 백그라운드 읽기 작업에서 계산한다.
+        val end = myFixture.editor.document.text.lastIndexOf("area()") + "area()".length
+        val (range, bodies) = inBackground {
+            val (range, methods) = CallTargets.hintAt(myFixture.file, end)!!
+            range to methods.map { CallTargets.body(it)!! }
+        }
+        ExpandedCalls.expand(myFixture.editor, range, bodies, 0)
+        val renderer = renderers().single()
+        val root = renderer.roots.single()
+        assertFalse(root.body.hasBody)
+
+        // 본문이 있는 구현체만 나온다(추상 Base 는 빠짐). 검색 순서는 보장되지 않으므로 정렬해서 비교한다.
+        val lines = renderer.visibleText()
+        assertEquals("double area();", lines[0])
+        assertEquals(InlineCallBundle.message("body.implementations"), lines[1])
+        val labels = root.body.calls.map { it.label }.sorted().toList()
+        assertEquals(listOf("Circle.area()", "Square.area()", "Tri.area()"), labels)
+
+        // 구현체 힌트를 펼치면 그 본문이 한 단계 아래에 보인다(Kotlin 구현체 포함).
+        val tri = root.body.calls.single { it.label == "Tri.area()" }
+        assertTrue(renderer.expand(root, tri, inBackground { tri.targets.map { FunctionBody.of(it.element!!)!! } }))
+        assertTrue(renderer.visibleText().contains("\toverride fun area(): Double = 0.5"))
+    }
+
+    fun testImplementationLinesHiddenAtMaxDepth() {
+        myFixture.configureByText(
+            "S.java",
+            """
+            interface S { int size(); }
+            class Impl implements S { public int size() { return 1; } }
+            """.trimIndent(),
+        )
+        val method = (myFixture.file as PsiJavaFile).classes.first().methods.single()
+        val renderer = FunctionBodyRenderer(listOf(CallTargets.body(method)!!), indentPx = 0, maxDepth = 0)
+        assertEquals(listOf("int size();", InlineCallBundle.message("body.implementations")), renderer.visibleText())
     }
 
     fun testMergedChainExpandsAllBodies() {
@@ -150,6 +210,9 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             renderer.visibleText(),
         )
     }
+
+    private fun <T> inBackground(action: () -> T): T =
+        ApplicationManager.getApplication().executeOnPooledThread<T> { ReadAction.compute<T, RuntimeException>(action) }.get()
 
     // ---- 갱신 / 정리 ----
 
