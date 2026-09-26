@@ -85,6 +85,18 @@ openssl req -key private.pem -new -x509 -days 365 -out chain.crt
 
 Keep the key files out of the repository.
 
+The certificate expires after the `-days` given above (check with `openssl x509 -in chain.crt -noout -enddate`); the key
+and its password do not. To renew, create a new certificate from the same key and replace only the `CERTIFICATE_CHAIN`
+secret:
+
+```bash
+openssl rsa -in private_encrypted.pem -out private.pem   # only if private.pem was deleted
+openssl req -key private.pem -new -x509 -days 365 -out chain.crt
+base64 < chain.crt                                       # new value of CERTIFICATE_CHAIN
+```
+
+Versions published before the certificate expired are not affected.
+
 ## Notes on internal APIs
 
 The editor's declarative hints offer no public way to identify a hint's provider or to read which arrow (▶/▼) is displayed,
