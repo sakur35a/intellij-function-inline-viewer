@@ -46,7 +46,7 @@ object ExpandedCalls {
             /* relatesToPrecedingText = */ true,
             /* showAbove = */ false,
             /* priority = */ 0,
-            FunctionBodyRenderer(body, indentPx),
+            InlineCallSettings.getInstance().state.let { FunctionBodyRenderer(body, indentPx, it.maxLines, it.maxDepth) },
         ) ?: return
         val marker = editor.document.createRangeMarker(callRange)
         map[marker] = inlay

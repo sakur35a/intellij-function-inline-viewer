@@ -27,5 +27,12 @@
 
         <editorFactoryMouseListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
         <editorFactoryMouseMotionListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
+
+        <applicationConfigurable
+                parentId="editor"
+                id="inline.call.body.settings"
+                instance="com.github.ljk0071.inlinecall.InlineCallConfigurable"
+                bundle="messages.InlineCallBundle"
+                key="settings.display.name"/>
     </extensions>
 </idea-plugin>
