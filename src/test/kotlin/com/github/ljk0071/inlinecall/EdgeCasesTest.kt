@@ -535,6 +535,30 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertFalse(root.children.containsKey(find))
     }
 
+    /** 마우스 위치로 어느 본문(최상위/중첩) 위인지 찾는다. 새로 계산돼도 중첩 본문은 호출과의 짝을 유지한다. */
+    fun testNodeAtAndParentCallSurviveRefresh() {
+        myFixture.configureByText(
+            "A.java",
+            "class A {\n    int helper(int x) { return x; }\n    int caller() {\n        return helper(1);\n    }\n    int v = caller();\n}\n",
+        )
+        val renderer = expandCallEndingWith("caller()")
+        val root = renderer.roots.single()
+        val call = root.body.calls.single()
+        assertTrue(renderer.expand(root, call, call.targets.map { FunctionBody.of(it.element!!)!! }))
+        val inlay = myFixture.editor.inlayModel.getBlockElementsInRange(0, myFixture.editor.document.textLength).single()
+        val bounds = inlay.bounds!!
+        val rowY = { row: Int -> bounds.y + JBUI.scale(2) + row * myFixture.editor.lineHeight + 1 }
+        assertSame(root, renderer.nodeAt(inlay, Point(bounds.x + 5, rowY(0))))
+        assertSame(root.children.getValue(call).single(), renderer.nodeAt(inlay, Point(bounds.x + 5, rowY(2))))
+
+        val document = myFixture.editor.document
+        edit { document.insertString(document.text.indexOf("return helper(1);"), "int unused = 0;\n        ") }
+        ExpandedCalls.refreshNow(myFixture.editor)
+        val refreshed = renderers().single().roots.single()
+        val (newCall, children) = refreshed.children.entries.single()
+        assertSame(newCall, children.single().parentCall)
+    }
+
     fun testImplementationLinesHiddenAtMaxDepth() {
         myFixture.configureByText(
             "S.java",

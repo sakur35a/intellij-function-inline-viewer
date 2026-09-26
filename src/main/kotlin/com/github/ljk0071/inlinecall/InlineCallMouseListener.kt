@@ -5,7 +5,6 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.Inlay
-import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.markup.HighlighterLayer
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.RangeHighlighter
@@ -42,8 +41,8 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         /** setCustomCursor 요청자. 인스턴스가 달라도 같은 커서 설정을 덮어쓰고 지우도록 고정한다. */
         val CURSOR_REQUESTOR = Any()
 
-        /** 마우스를 올린 호출부 힌트와, 그 힌트가 가리키는 호출된 이름 강조. EDT 전용. */
-        var highlightedHint: Inlay<*>? = null
+        /** 이름 강조를 일으킨 대상(호출부 힌트 inlay 또는 최상위 본문 노드)과 그 강조. EDT 전용. */
+        var highlightedKey: Any? = null
         var nameHighlighters: List<RangeHighlighter> = emptyList()
     }
 
@@ -83,7 +82,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
                     DeclarativeHint.isOverText(inlay, Point(point.x - bounds.x, point.y - bounds.y)) == true
                 hoveredInlay = inlay
                 (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, if (overText) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
-                if (highlightedHint !== inlay) highlightCalledNames(e.editor, inlay)
+                highlightCalledNames(e.editor, key = inlay, offset = inlay.offset)
             }
             return
         }
@@ -91,7 +90,19 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             renderer.hovered = token
             inlay.repaint()
         }
-        hoveredInlay = if (clickable) inlay else null
+        // 펼친 본문 위: 최상위 본문이면 에디터의 호출된 이름을, 중첩 본문이면 바깥 본문의 호출된 이름을 강조한다.
+        val node = renderer.nodeAt(inlay, e.mouseEvent.point)
+        if (renderer.hoveredNode !== node) {
+            renderer.hoveredNode = node
+            inlay.repaint()
+        }
+        if (node != null && node.depth == 0) {
+            val roots = renderer.roots
+            highlightCalledNames(e.editor, key = node, offset = inlay.offset, nameIndex = roots.indexOf(node), nameCount = roots.size)
+        } else {
+            clearNameHighlight()
+        }
+        hoveredInlay = inlay
         (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, if (clickable) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
     }
 
@@ -161,27 +172,30 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     }
 
     /**
-     * 에디터 코드 줄의 힌트는 색을 바꿀 수 없어서(선언형 힌트 API), 마우스를 올리면 그 힌트가 가리키는 호출된
-     * 함수 이름을 강조해 짝을 보여준다. 이름 위치는 resolve 가 필요하므로 백그라운드에서 구한다.
+     * 짝이 되는 호출된 이름을 에디터에서 강조한다(색: Color Scheme 의 "Called name").
+     * 에디터 코드 줄의 힌트는 색을 바꿀 수 없어서(선언형 힌트 API) 힌트에 마우스를 올리거나, 최상위 펼친 본문에
+     * 마우스를 올렸을 때 쓴다. 이름 위치는 resolve 가 필요하므로 백그라운드에서 구한다. [key] 가 같으면 다시 구하지 않는다.
      */
-    private fun highlightCalledNames(editor: Editor, inlay: Inlay<*>) {
+    private fun highlightCalledNames(editor: Editor, key: Any, offset: Int, nameIndex: Int? = null, nameCount: Int = 0) {
+        if (highlightedKey === key) return
         clearNameHighlight()
-        highlightedHint = inlay
+        highlightedKey = key
         val project = editor.project ?: return
-        val offset = inlay.offset
         ReadAction.nonBlocking<List<TextRange>> {
             val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return@nonBlocking emptyList()
-            CallTargets.hintAt(psiFile, offset)?.names.orEmpty()
+            val names = CallTargets.hintAt(psiFile, offset)?.names.orEmpty()
+            // 합친 체인을 펼친 본문(최상위가 여러 개)이면 그 본문에 해당하는 이름만.
+            if (nameIndex != null && nameCount > 1 && names.size == nameCount) listOf(names[nameIndex]) else names
         }
             .inSmartMode(project)
             .expireWith(project)
-            .expireWhen { highlightedHint !== inlay || editor.isDisposed }
+            .expireWhen { highlightedKey !== key || editor.isDisposed }
             .finishOnUiThread(ModalityState.defaultModalityState()) { names ->
-                if (highlightedHint !== inlay) return@finishOnUiThread
+                if (highlightedKey !== key) return@finishOnUiThread
                 val length = editor.document.textLength
                 nameHighlighters = names.filter { it.endOffset <= length }.map {
                     editor.markupModel.addRangeHighlighter(
-                        EditorColors.IDENTIFIER_UNDER_CARET_ATTRIBUTES, it.startOffset, it.endOffset,
+                        InlineCallColors.CALLED_NAME, it.startOffset, it.endOffset,
                         HighlighterLayer.SELECTION - 1, HighlighterTargetArea.EXACT_RANGE,
                     )
                 }
@@ -190,7 +204,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     }
 
     private fun clearNameHighlight() {
-        highlightedHint = null
+        highlightedKey = null
         nameHighlighters.forEach { if (it.isValid) it.dispose() }
         nameHighlighters = emptyList()
     }
@@ -199,7 +213,10 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         clearNameHighlight()
         val inlay = hoveredInlay ?: return
         hoveredInlay = null
-        (inlay.renderer as? FunctionBodyRenderer)?.hovered = null
+        (inlay.renderer as? FunctionBodyRenderer)?.let {
+            it.hovered = null
+            it.hoveredNode = null
+        }
         if (inlay.isValid) inlay.repaint()
         (editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, null)
     }

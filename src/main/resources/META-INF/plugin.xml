@@ -29,6 +29,8 @@
         <editorFactoryMouseMotionListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
         <editorFactoryListener implementation="com.github.ljk0071.inlinecall.HintStateListener"/>
 
+        <colorSettingsPage implementation="com.github.ljk0071.inlinecall.InlineCallColorSettingsPage"/>
+
         <applicationConfigurable
                 parentId="editor"
                 id="inline.call.body.settings"

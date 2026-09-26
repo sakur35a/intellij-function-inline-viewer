@@ -199,6 +199,7 @@ object ExpandedCalls {
                 val children = call.targets.mapIndexedNotNull { index, pointer ->
                     pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1, force, call::load) }
                 }
+                children.forEach { it.parentCall = call }
                 if (children.isNotEmpty()) node.children[call] = children
             }
             return node

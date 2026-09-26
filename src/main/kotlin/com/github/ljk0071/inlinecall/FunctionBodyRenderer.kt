@@ -1,10 +1,10 @@
 package com.github.ljk0071.inlinecall
 
-import com.intellij.codeHighlighting.RainbowHighlighter
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.colors.EditorColors
 import com.intellij.openapi.editor.colors.EditorFontType
 import com.intellij.openapi.editor.ex.util.EditorUIUtil
 import com.intellij.openapi.editor.markup.TextAttributes
@@ -22,10 +22,14 @@ import java.awt.geom.Rectangle2D
  * 펼쳐진 본문 하나. [children] 은 본문 안에서 다시 펼친 호출들(체인이면 호출 하나에 본문 여러 개).
  * [extraLines] 는 "… more lines" 를 눌러 최대 줄 수보다 더 보여주는 줄 수.
  */
-class BodyNode(body: FunctionBody, val depth: Int, extraLines: Int = 0) {
+class BodyNode(body: FunctionBody, val depth: Int, extraLines: Int = 0, parentCall: BodyCall? = null) {
     var body: FunctionBody = body
         internal set
     var extraLines: Int = extraLines
+        internal set
+
+    /** 이 본문을 펼친 바깥 본문의 호출(최상위 본문이면 null). 색 짝과 마우스 오버 강조에 쓴다. */
+    var parentCall: BodyCall? = parentCall
         internal set
     val children = LinkedHashMap<BodyCall, List<BodyNode>>()
 }
@@ -81,6 +85,9 @@ class FunctionBodyRenderer(
     /** Cmd 를 누른 채 마우스를 올린 토큰. 밑줄로 표시한다. EDT 에서만 바꾼다. */
     var hovered: BodyToken? = null
 
+    /** 마우스를 올린 중첩 본문. 이 본문을 펼친 바깥 본문의 호출된 이름을 강조한다. EDT 에서만 바꾼다. */
+    var hoveredNode: BodyNode? = null
+
     /**
      * 한 줄: 본문의 한 줄이거나, 클릭하면 더 불러오는 "… more" 안내([more]).
      * [separator] 면 위에 구분선을 긋는다.
@@ -91,6 +98,8 @@ class FunctionBodyRenderer(
         val moreText: String?,
         val separator: Boolean = false,
         val more: MoreKind? = null,
+        /** 깊이 0..depth 각 본문의 호출 구분 색 번호(펼친 호출에 색이 없으면 null). 배경과 왼쪽 막대에 쓴다. */
+        val colors: List<Int?> = emptyList(),
     )
 
     private sealed interface Piece {
@@ -98,7 +107,14 @@ class FunctionBodyRenderer(
         val width: Int
 
         /** [rainbow] 는 같은 줄의 다른 호출과 구분하는 무지개 색 번호(호출된 이름 토큰 / 그 힌트) */
-        class Text(val token: BodyToken, val attrs: TextAttributes?, override val x: Int, override val width: Int, val rainbow: Int? = null) : Piece
+        class Text(
+            val token: BodyToken,
+            val attrs: TextAttributes?,
+            override val x: Int,
+            override val width: Int,
+            val rainbow: Int? = null,
+            val index: Int = -1,
+        ) : Piece
         class Hint(val call: BodyCall, val text: String, override val x: Int, override val width: Int) : Piece
         class Label(val text: String, override val x: Int, override val width: Int) : Piece
         class Action(val action: MoreAction, val text: String, override val x: Int, override val width: Int) : Piece
@@ -112,15 +128,16 @@ class FunctionBodyRenderer(
     private fun flatten(): List<Row> {
         remainingLines.clear()
         val result = ArrayList<Row>()
-        fun visit(nodes: List<BodyNode>) {
+        fun visit(nodes: List<BodyNode>, inherited: List<Int?>) {
             nodes.forEachIndexed { index, node ->
                 val body = node.body
+                val colors = inherited + node.parentCall?.color
                 var first = index > 0
                 fun add(line: BodyLine) {
                     if (line.nestedOnly && !canExpand(node)) return
-                    result += Row(node, line, null, separator = first)
+                    result += Row(node, line, null, separator = first, colors = colors)
                     first = false
-                    for (call in line.calls) node.children[call]?.let(::visit)
+                    for (call in line.calls) node.children[call]?.let { visit(it, colors) }
                 }
                 // 원본 줄만 최대 줄 수(+ 더 보기로 늘린 만큼)로 자르고, 덧붙인 안내 줄(구현체/재정의 목록)은 항상 보여준다.
                 val source = body.lines.subList(0, body.sourceLineCount)
@@ -129,16 +146,16 @@ class FunctionBodyRenderer(
                 if (source.size > shown) {
                     val text = InlineCallBundle.message("body.more.lines", source.size - shown)
                     remainingLines[node] = source.size - shown
-                    result += Row(node, null, text, separator = first, more = MoreKind.LINES)
+                    result += Row(node, null, text, separator = first, more = MoreKind.LINES, colors = colors)
                     first = false
                 }
                 body.lines.subList(body.sourceLineCount, body.lines.size).forEach(::add)
                 if (body.hasMoreResults && canExpand(node)) {
-                    result += Row(node, null, "    " + InlineCallBundle.message("body.more.results"), more = MoreKind.RESULTS)
+                    result += Row(node, null, "    " + InlineCallBundle.message("body.more.results"), more = MoreKind.RESULTS, colors = colors)
                 }
             }
         }
-        visit(roots)
+        visit(roots, emptyList())
         return result
     }
 
@@ -157,7 +174,7 @@ class FunctionBodyRenderer(
     /** EDT 전용. 호출 후 inlay.update() 필요. */
     fun expand(node: BodyNode, call: BodyCall, bodies: List<FunctionBody>): Boolean {
         if (bodies.isEmpty() || node.children.containsKey(call) || !canExpand(node)) return false
-        node.children[call] = bodies.map { BodyNode(it, node.depth + 1) }
+        node.children[call] = bodies.map { BodyNode(it, node.depth + 1, parentCall = call) }
         changed()
         return true
     }
@@ -168,7 +185,7 @@ class FunctionBodyRenderer(
      */
     fun resolvePending(node: BodyNode, call: BodyCall, pending: List<BodyNode>, bodies: List<FunctionBody>): Boolean {
         if (node.children[call] !== pending) return false
-        if (bodies.isEmpty()) node.children.remove(call) else node.children[call] = bodies.map { BodyNode(it, node.depth + 1) }
+        if (bodies.isEmpty()) node.children.remove(call) else node.children[call] = bodies.map { BodyNode(it, node.depth + 1, parentCall = call) }
         changed()
         return true
     }
@@ -203,7 +220,10 @@ class FunctionBodyRenderer(
         if (!contains(node)) return false
         val oldChildren = node.children.entries.associate { (call, nodes) -> call.key to nodes }
         node.children.clear()
-        for (call in body.calls) oldChildren[call.key]?.let { node.children[call] = it }
+        for (call in body.calls) oldChildren[call.key]?.let { children ->
+            children.forEach { it.parentCall = call }
+            node.children[call] = children
+        }
         node.body = body
         node.extraLines = extraLines
         changed()
@@ -262,10 +282,22 @@ class FunctionBodyRenderer(
 
     private fun plainMetrics(editor: Editor) = editor.contentComponent.getFontMetrics(font(editor, null))
 
-    private fun backgroundFor(editor: Editor, depth: Int): Color {
+    /**
+     * 펼친 본문 배경. 에디터 배경에 글자색을 살짝 섞고(깊이마다 조금 더), [tint] 색 번호가 있으면 그 색을 옅게 섞는다.
+     * 글자는 문법 색 그대로 그리므로, 가독성을 위해 색은 라이트 12% / 다크 18% 까지만 섞는다.
+     */
+    private fun backgroundFor(editor: Editor, depth: Int, tint: Int? = null): Color {
         val scheme = editor.colorsScheme
-        return ColorUtil.mix(scheme.defaultBackground, scheme.defaultForeground, 0.04 + 0.03 * depth)
+        val base = ColorUtil.mix(scheme.defaultBackground, scheme.defaultForeground, 0.04 + 0.03 * depth)
+        if (tint == null) return base
+        val ratio = if (ColorUtil.isDark(scheme.defaultBackground)) 0.18 else 0.12
+        return ColorUtil.mix(base, rainbowColor(editor, tint), ratio)
     }
+
+    /** 호출된 이름 강조 배경(Color Scheme 의 "Called name"). 없으면 선택 영역 색을 옅게. */
+    private fun calledNameBackground(editor: Editor): Color =
+        editor.colorsScheme.getAttributes(InlineCallColors.CALLED_NAME)?.backgroundColor
+            ?: ColorUtil.withAlpha(editor.colorsScheme.getColor(EditorColors.SELECTION_BACKGROUND_COLOR) ?: JBColor.YELLOW, 0.5)
 
     private fun hintAttributes(editor: Editor): TextAttributes? =
         editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.INLAY_DEFAULT)
@@ -279,7 +311,7 @@ class FunctionBodyRenderer(
         line.tokens.forEachIndexed { index, token ->
             val attrs = attributes(editor, token)
             val width = editor.contentComponent.getFontMetrics(font(editor, attrs)).stringWidth(token.text)
-            pieces += Piece.Text(token, attrs, x, width, line.tokenColors[index])
+            pieces += Piece.Text(token, attrs, x, width, line.tokenColors[index], index)
             x += width
             if (!showHints) return@forEachIndexed
             for (call in line.calls) {
@@ -347,16 +379,24 @@ class FunctionBodyRenderer(
             val rowY = y + index * lineHeight
             val baseline = rowY + baselineShift
 
-            // 중첩 본문은 깊이마다 조금 더 진하게
+            // 중첩 본문은 깊이마다 조금 더 진하게. 색이 있는 호출을 펼친 본문은 그 색을 옅게 섞어 짝을 보여준다.
             if (row.node.depth > 0) {
                 val left = barX(editor, x, row.node.depth)
-                g.color = backgroundFor(editor, row.node.depth)
+                val tint = row.colors.lastOrNull { it != null }
+                g.color = backgroundFor(editor, row.node.depth, tint)
                 g.fillRect(left, rowY, regionRight - left, lineHeight)
             }
 
-            // 깊이마다 왼쪽 세로 막대로 "펼쳐진 본문" 영역임을 표시
+            // 깊이마다 왼쪽 세로 막대로 "펼쳐진 본문" 영역임을 표시(색이 있는 호출이면 그 색)
+            for (depth in 0..row.node.depth) {
+                g.color = row.colors.getOrNull(depth)?.let { rainbowColor(editor, it) }
+                    ?: ColorUtil.withAlpha(scheme.defaultForeground, 0.35)
+                g.fillRect(barX(editor, x, depth), rowY, barWidth, lineHeight)
+            }
             g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.35)
-            for (depth in 0..row.node.depth) g.fillRect(barX(editor, x, depth), rowY, barWidth, lineHeight)
+
+            // 마우스를 올린 중첩 본문을 펼친 호출의 이름을 강조한다.
+            val highlightedNames = hoveredNode?.parentCall?.takeIf { call -> row.line?.calls?.any { it === call } == true }?.nameTokens.orEmpty()
             // 합친 체인의 본문 사이 구분선
             if (row.separator) {
                 val left = barX(editor, x, row.node.depth)
@@ -366,6 +406,10 @@ class FunctionBodyRenderer(
             for (piece in layout(editor, row, x)) {
                 when (piece) {
                     is Piece.Text -> {
+                        if (piece.index in highlightedNames) {
+                            g.color = calledNameBackground(editor)
+                            g.fillRect(piece.x, rowY, piece.width, lineHeight)
+                        }
                         g.font = font(editor, piece.attrs)
                         g.color = piece.rainbow?.let { rainbowColor(editor, it) } ?: piece.attrs?.foregroundColor ?: scheme.defaultForeground
                         g.drawString(piece.token.text, piece.x, baseline)
@@ -397,11 +441,17 @@ class FunctionBodyRenderer(
         g.drawString(text, x + hintPadding, baseline)
     }
 
-    /** 컬러 스킴의 무지개 색(Rainbow 설정과 같은 색). 스킴에 없으면 기본 팔레트. */
+    /** 호출 구분 색(기본은 IDE 무지개 색, Color Scheme 에서 변경 가능). 스킴에 없으면 기본 팔레트. */
     private fun rainbowColor(editor: Editor, index: Int): Color {
-        val keys = RainbowHighlighter.RAINBOW_COLOR_KEYS
+        val keys = InlineCallColors.CALL_COLORS
         return editor.colorsScheme.getAttributes(keys[index % keys.size])?.foregroundColor
             ?: FALLBACK_RAINBOW[index % FALLBACK_RAINBOW.size]
+    }
+
+    /** [point](에디터 content 좌표)가 속한 본문. 없으면 null. */
+    fun nodeAt(inlay: Inlay<*>, point: Point): BodyNode? {
+        val bounds = inlay.bounds ?: return null
+        return rows.getOrNull((point.y - bounds.y - verticalPadding).floorDiv(inlay.editor.lineHeight))?.node
     }
 
     /** [point](에디터 content 좌표) 아래의 토큰 또는 호출 힌트. 없으면 null. */

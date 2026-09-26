@@ -205,4 +205,37 @@ class FunctionBodyTest : BasePlatformTestCase() {
         assertEquals(mul.color, colorOf("mul"))
         assertEquals(add.color, colorOf("add"))
     }
+
+    /** 색이 있는 호출을 펼친 중첩 본문은 그 호출(색)을 기억하고, 호출은 자기 이름 토큰 위치를 안다. */
+    fun testNestedNodeRemembersColoredCall() {
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                int multiplyBy(int a, int b) { return a * b; }
+                int fact(int n) {
+                    return n <= 1 ? 1 : multiplyBy(n, fact(n - 1));
+                }
+            }
+            """.trimIndent(),
+        )
+        val renderer = FunctionBodyRenderer(listOf(CallTargets.body(javaMethod("fact"))!!), indentPx = 0)
+        val root = renderer.roots.single()
+        val line = root.body.lines[1]
+        val multiply = line.calls.single { it.label.startsWith("multiplyBy") }
+        assertEquals(1, multiply.color)
+        assertEquals(listOf("multiplyBy"), multiply.nameTokens.map { line.tokens[it].text })
+
+        assertTrue(renderer.expand(root, multiply, multiply.targets.map { FunctionBody.of(it.element!!)!! }))
+        val child = root.children.getValue(multiply).single()
+        assertSame(multiply, child.parentCall)
+        assertNull(root.parentCall)
+    }
+
+    fun testColorSettingsPageDemoUsesAllTags() {
+        val page = InlineCallColorSettingsPage()
+        val demo = page.demoText
+        for (tag in page.additionalHighlightingTagToDescriptorMap.keys) assertTrue(tag, "<$tag>" in demo && "</$tag>" in demo)
+        assertEquals(1 + InlineCallColors.CALL_COLORS.size, page.attributeDescriptors.size)
+    }
 }

@@ -61,6 +61,8 @@ class BodyCall(
     val searchesOverrides: Boolean = false,
     /** 한 줄에 호출이 여럿일 때 무지개 색 번호(힌트와 호출된 이름을 같은 색으로 칠한다). 하나뿐이면 null. */
     val color: Int? = null,
+    /** 이 호출의 호출된 이름 토큰 번호(같은 줄 기준). 펼친 본문에 마우스를 올리면 강조한다. */
+    val nameTokens: List<Int> = emptyList(),
 ) {
     /** 이 힌트를 펼쳤을 때 보여줄 본문. 읽기 작업 안에서 호출. */
     fun load(target: PsiElement): FunctionBody? =
@@ -211,10 +213,11 @@ class FunctionBody(
                     val index = trimmed.indexOfLast { token -> token.sourceOffset < callEnd }
                     val ordinal = labelCounts.merge(call.label, 1, Int::plus)
                     val color = if (rainbow) order else null
-                    if (color != null) {
-                        trimmed.forEachIndexed { i, token -> if (call.names.any { token.sourceOffset in it.startOffset until it.endOffset }) tokenColors[i] = color }
+                    val nameTokens = trimmed.indices.filter { i ->
+                        call.names.any { trimmed[i].sourceOffset in it.startOffset until it.endOffset }
                     }
-                    BodyCall(index, call.label, call.targets, "${call.label}#$ordinal", color = color)
+                    if (color != null) nameTokens.forEach { tokenColors[it] = color }
+                    BodyCall(index, call.label, call.targets, "${call.label}#$ordinal", color = color, nameTokens = nameTokens)
                 }
                 BodyLine(trimmed, calls.filter { it.afterToken >= 0 }, tokenColors = tokenColors)
             }
