@@ -10,13 +10,14 @@ plugins {
 }
 
 // 버전은 git 태그(vX.Y.Z)와 그 뒤의 Conventional Commits 로 계산한다(fix: 는 patch, feat: 는 minor, ! / BREAKING CHANGE 는 major).
-// 릴리스는 ./gradlew release 로 "release: vX.Y.Z" 커밋과 vX.Y.Z 태그를 만든다(아래 GitReleaseTask). 그 사이의 빌드는 -SNAPSHOT 이 붙는다.
+// 릴리스는 ./gradlew release-push 로 "release: vX.Y.Z" 커밋과 vX.Y.Z 태그를 만들어 push 한다(아래 GitReleaseTask).
+// 태그 push 를 받은 GitHub Actions 가 Marketplace 에 올린다. 그 사이의 빌드는 -SNAPSHOT 이 붙는다.
 semver {
     releaseTagNameFormat = "v%s"
 }
 
 /**
- * 릴리스 커밋과 태그를 git 명령으로 만든다. 플러그인의 releaseVersion 은 JGit 으로 커밋해서,
+ * 릴리스 커밋과 태그를 git 명령으로 만들어 push 한다. 플러그인의 releaseVersion 은 JGit 으로 커밋해서,
  * commit.gpgsign 이 켜져 있으면 gpg-agent 를 쓰지 못해 서명에 실패한다. git 명령은 사용자의 서명 설정을 그대로 따른다.
  */
 abstract class GitReleaseTask : DefaultTask() {
@@ -54,15 +55,30 @@ abstract class GitReleaseTask : DefaultTask() {
         val changes = git("log", "--format=- %s", range)
         git("commit", "--allow-empty", "-m", "release: $tag\n\n$changes")
         git("tag", "-a", tag, "-m", "release: $tag")
-
         logger.lifecycle("Released $tag (${if (previousTag.isEmpty()) "first release" else "since $previousTag"}).")
-        logger.lifecycle("Next: ./gradlew buildPlugin, then git push --follow-tags")
+
+        // 태그 push 가 Release 워크플로(Marketplace 업로드)를 시작한다. 실패하면 로컬 커밋/태그는 남으니 다시 push 하면 된다.
+        pushWithTags()
+        logger.lifecycle("Pushed $tag. GitHub Actions publishes it to JetBrains Marketplace.")
+    }
+
+    private fun pushWithTags() {
+        val error = ByteArrayOutputStream()
+        val result = exec.exec {
+            workingDir(repositoryDir.get().asFile)
+            commandLine("git", "push", "--follow-tags")
+            errorOutput = error
+            isIgnoreExitValue = true
+        }
+        check(result.exitValue == 0) {
+            "Created the release commit and tag locally, but git push failed. Fix it and run: git push --follow-tags\n$error"
+        }
     }
 }
 
-tasks.register<GitReleaseTask>("release") {
+tasks.register<GitReleaseTask>("release-push") {
     group = "versioning"
-    description = "Creates the release commit and vX.Y.Z tag with the git command (honors commit signing)."
+    description = "Creates the release commit and vX.Y.Z tag with the git command (honors commit signing) and pushes them."
     currentVersion = semver.version
     repositoryDir = layout.projectDirectory
     outputs.upToDateWhen { false }
