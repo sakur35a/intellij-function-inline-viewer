@@ -11,6 +11,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics2D
 import java.awt.Point
@@ -176,6 +177,11 @@ class FunctionBodyRenderer(
 
     private fun plainMetrics(editor: Editor) = editor.contentComponent.getFontMetrics(font(editor, null))
 
+    private fun backgroundFor(editor: Editor, depth: Int): Color {
+        val scheme = editor.colorsScheme
+        return ColorUtil.mix(scheme.defaultBackground, scheme.defaultForeground, 0.04 + 0.03 * depth)
+    }
+
     private fun hintAttributes(editor: Editor): TextAttributes? =
         editor.colorsScheme.getAttributes(DefaultLanguageHighlighterColors.INLAY_DEFAULT)
 
@@ -228,9 +234,21 @@ class FunctionBodyRenderer(
 
         EditorUIUtil.setupAntialiasing(g)
 
+        // 펼친 본문 영역 배경. 에디터 배경에 글자색을 살짝 섞어서(라이트는 어둡게, 다크는 밝게) 실제 코드와 구분한다.
+        val regionRight = x + targetRegion.width.toInt()
+        g.color = backgroundFor(editor, 0)
+        g.fillRect(x + indentPx, targetRegion.y.toInt(), regionRight - x - indentPx, targetRegion.height.toInt())
+
         rows.forEachIndexed { index, row ->
             val rowY = y + index * lineHeight
             val baseline = rowY + baselineShift
+
+            // 중첩 본문은 깊이마다 조금 더 진하게
+            if (row.node.depth > 0) {
+                val left = barX(editor, x, row.node.depth)
+                g.color = backgroundFor(editor, row.node.depth)
+                g.fillRect(left, rowY, regionRight - left, lineHeight)
+            }
 
             // 깊이마다 왼쪽 세로 막대로 "펼쳐진 본문" 영역임을 표시
             g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.35)

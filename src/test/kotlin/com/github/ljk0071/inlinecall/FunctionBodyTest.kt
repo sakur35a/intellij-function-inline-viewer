@@ -1,5 +1,7 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.openapi.editor.EditorCustomElementRenderer
+import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.psi.PsiJavaFile
 import com.intellij.psi.PsiMethod
@@ -160,5 +162,25 @@ class FunctionBodyTest : BasePlatformTestCase() {
         val root = renderer.roots.single()
         assertTrue(renderer.collapse(root, root.body.lines[1].calls.single()))
         assertEquals(3, renderer.visibleText().size)
+    }
+
+    /** 힌트 클릭 뒤 캐럿이 힌트 오른쪽에 그려지면 왼쪽(호출 바로 뒤)으로 옮긴다. */
+    fun testCaretIsKeptBeforeHint() {
+        myFixture.configureByText("A.java", "class A { int v = f(); int f() { return 1; } }")
+        val editor = myFixture.editor
+        val offset = editor.document.text.indexOf("f()") + "f()".length
+        // 선언형 힌트처럼 앞 텍스트에 붙는 인라인 inlay
+        editor.inlayModel.addInlineElement(offset, true, object : EditorCustomElementRenderer {
+            override fun calcWidthInPixels(inlay: Inlay<*>) = 50
+        })!!
+        val column = editor.offsetToLogicalPosition(offset).column
+
+        // 플랫폼이 힌트를 클릭했을 때처럼 캐럿을 힌트 오른쪽에 둔다.
+        editor.caretModel.moveToVisualPosition(editor.offsetToVisualPosition(offset, true, false))
+        assertEquals(column + 1, editor.caretModel.visualPosition.column)
+
+        InlineCallMouseListener.keepCaretBeforeHint(editor, offset)
+        assertEquals(offset, editor.caretModel.offset)
+        assertEquals(column, editor.caretModel.visualPosition.column)
     }
 }

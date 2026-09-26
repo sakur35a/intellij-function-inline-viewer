@@ -1,6 +1,7 @@
 package com.github.ljk0071.inlinecall
 
 import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
@@ -127,6 +128,24 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         val inlay = e.inlay ?: return
         if (!isOurHint(inlay)) return
         toggle(e.editor, inlay.offset)
+        // 다른 마우스 리스너(플랫폼)가 이 클릭으로 캐럿을 옮긴 뒤에 보정하도록 이벤트 처리가 끝난 다음 실행한다.
+        val editor = e.editor
+        val offset = inlay.offset
+        ApplicationManager.getApplication().invokeLater({ keepCaretBeforeHint(editor, offset) }, { editor.isDisposed })
+    }
+
+    companion object {
+        /**
+         * 힌트를 클릭하면 플랫폼이 캐럿을 힌트 오프셋(호출 끝)으로 옮기면서 화면에서는 힌트 오른쪽에 그린다.
+         * 입력은 호출 바로 뒤에 들어가므로, 화면에서도 힌트 왼쪽(호출 바로 뒤)에 보이도록 옮긴다.
+         */
+        fun keepCaretBeforeHint(editor: Editor, offset: Int) {
+            if (editor.caretModel.caretCount > 1) return
+            val caret = editor.caretModel.primaryCaret
+            if (caret.offset != offset || caret.hasSelection()) return
+            val beforeInlays = editor.offsetToVisualPosition(offset, /* leanForward = */ false, /* beforeSoftWrap = */ false)
+            if (caret.visualPosition != beforeInlays) caret.moveToVisualPosition(beforeInlays)
+        }
     }
 
     /**
