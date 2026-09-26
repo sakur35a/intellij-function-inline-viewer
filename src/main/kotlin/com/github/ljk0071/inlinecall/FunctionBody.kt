@@ -258,6 +258,17 @@ class FunctionBody(
             }
         }
 
+        /**
+         * "▶ find" 를 누른 직후 검색 결과가 오기 전까지 보여줄 자리표시 본문("// searching…").
+         * 처음 검색은 캐시가 비어 있어 0.5~1.5초 걸리므로(Exposed) 클릭이 먹혔는지 바로 보여준다.
+         * 목록 본문으로 표시해 두어, 그 사이 다시 계산되면 실제 검색으로 대체된다.
+         */
+        fun searching(parent: FunctionBody, call: BodyCall): FunctionBody =
+            FunctionBody(
+                parent.file, modificationStamp = -1, listOf(note(InlineCallBundle.message("body.searching"))),
+                call.targets.firstOrNull() ?: parent.target, hasBody = true, sourceLineCount = 0, resultLimit = RESULT_PAGE,
+            )
+
         /** "// <헤더> ▶ find": 클릭하면 구현체/재정의를 검색해 한 단계 아래에 펼친다. */
         private fun findLine(declaration: PsiElement, headerKey: String, nestedOnly: Boolean): BodyLine {
             val call = BodyCall(0, InlineCallBundle.message("body.find.overrides"), listOf(pointerTo(declaration)), "overrides", searchesOverrides = true)

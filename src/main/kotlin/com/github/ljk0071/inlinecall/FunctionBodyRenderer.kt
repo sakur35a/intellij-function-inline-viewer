@@ -155,6 +155,17 @@ class FunctionBodyRenderer(
         return true
     }
 
+    /**
+     * EDT 전용. 자리표시([pending])로 펼쳐 둔 호출을 실제 본문으로 바꾼다. 결과가 없으면 접는다.
+     * 그 사이 사용자가 접었거나 다른 내용으로 바뀌었으면 false. 호출 후 inlay.update() 필요.
+     */
+    fun resolvePending(node: BodyNode, call: BodyCall, pending: List<BodyNode>, bodies: List<FunctionBody>): Boolean {
+        if (node.children[call] !== pending) return false
+        if (bodies.isEmpty()) node.children.remove(call) else node.children[call] = bodies.map { BodyNode(it, node.depth + 1) }
+        changed()
+        return true
+    }
+
     /** EDT 전용. 다시 계산한 트리로 바꾼다. 호출 후 inlay.update() 필요. */
     fun replaceRoots(newRoots: List<BodyNode>) {
         hovered = null

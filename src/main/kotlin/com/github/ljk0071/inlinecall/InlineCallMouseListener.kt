@@ -91,13 +91,21 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             return
         }
         val project = editor.project ?: return
+        // 구현체/재정의 검색은 처음에 느릴 수 있어 "searching…" 을 먼저 펼쳐 둔다.
+        val pending = if (call.searchesOverrides && renderer.expand(node, call, listOf(FunctionBody.searching(node.body, call)))) {
+            inlay.update()
+            node.children[call]
+        } else {
+            null
+        }
         val start = System.nanoTime()
         ReadAction.nonBlocking<List<FunctionBody>> { call.targets.mapNotNull { it.element?.let(call::load) } }
             .inSmartMode(project)
             .expireWith(project)
             .expireWhen { !inlay.isValid }
             .finishOnUiThread(ModalityState.defaultModalityState()) { bodies ->
-                if (renderer.expand(node, call, bodies)) inlay.update()
+                val changed = if (pending != null) renderer.resolvePending(node, call, pending, bodies) else renderer.expand(node, call, bodies)
+                if (changed) inlay.update()
                 Perf.since("expand.nested", start, "label=${call.label} depth=${node.depth + 1}")
             }
             .submit(AppExecutorUtil.getAppExecutorService())

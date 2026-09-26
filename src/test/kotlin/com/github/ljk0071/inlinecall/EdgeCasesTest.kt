@@ -494,6 +494,37 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertFalse(all.hasMoreResults)
     }
 
+    /** "▶ find" 는 "searching…" 을 먼저 펼치고 결과로 바꾼다. 검색 중에 접었으면 결과를 버린다. */
+    fun testFindShowsSearchingPlaceholder() {
+        myFixture.configureByText(
+            "S.java",
+            """
+            interface S { int size(); }
+            class A implements S { public int size() { return 1; } }
+            """.trimIndent(),
+        )
+        val method = (myFixture.file as PsiJavaFile).classes.first().methods.single()
+        val renderer = FunctionBodyRenderer(listOf(CallTargets.body(method)!!), indentPx = 0)
+        val root = renderer.roots.single()
+        val find = root.body.calls.single()
+
+        assertTrue(renderer.expand(root, find, listOf(FunctionBody.searching(root.body, find))))
+        val pending = root.children.getValue(find)
+        assertEquals("\t" + InlineCallBundle.message("body.searching"), renderer.visibleText().last())
+
+        val found = inBackground { find.targets.mapNotNull { it.element?.let(find::load) } }
+        assertTrue(renderer.resolvePending(root, find, pending, found))
+        assertEquals(listOf("A.size()"), root.children.getValue(find).single().body.calls.map { it.label }.toList())
+
+        // 검색 중에 접었다가(자리표시가 사라짐) 결과가 오면 무시한다.
+        assertTrue(renderer.collapse(root, find))
+        assertTrue(renderer.expand(root, find, listOf(FunctionBody.searching(root.body, find))))
+        val stale = root.children.getValue(find)
+        assertTrue(renderer.collapse(root, find))
+        assertFalse(renderer.resolvePending(root, find, stale, found))
+        assertFalse(root.children.containsKey(find))
+    }
+
     fun testImplementationLinesHiddenAtMaxDepth() {
         myFixture.configureByText(
             "S.java",
