@@ -10,7 +10,7 @@ import statistics
 import sys
 from collections import defaultdict
 
-DEFAULT = ".intellijPlatform/sandbox/*/*/log/idea.log*"
+DEFAULT = ".intellijPlatform/sandbox/*/*/log_runIde/idea.log*"
 LINE = re.compile(r"perf event=(\S+) ms=([\d.]+) ?(.*)$")
 
 
