@@ -36,6 +36,9 @@ class BodyToken(
     fun sourceOffsetAt(index: Int): Int = if (exact) sourceOffset + index.coerceIn(0, text.length) else sourceOffset
 
     fun withText(newText: String) = BodyToken(newText, sourceOffset, keys, exact)
+
+    /** 렉서 색 위에 [key] 를 덧칠한다(나중 키가 우선). */
+    fun withKey(key: TextAttributesKey) = BodyToken(text, sourceOffset, keys + key, exact)
 }
 
 /**
@@ -96,6 +99,7 @@ class FunctionBody(
             val callEnds = collectCalls(declaration, start, end)
 
             val labelCounts = HashMap<String, Int>()
+            val semanticLineLimit = InlineCallSettings.getInstance().state.maxLines
             val firstLine = document.getLineNumber(start)
             val indent = start - document.getLineStartOffset(firstLine)
             val lines = (firstLine..document.getLineNumber(end)).map { line ->
@@ -116,7 +120,13 @@ class FunctionBody(
                     }
                     it.advance()
                 }
-                val trimmed = trimEnd(tokens)
+                var trimmed = trimEnd(tokens)
+                // 의미 분석 색은 식별자마다 resolve 가 필요하므로 화면에 보이는 줄(최대 줄 수)까지만 칠한다.
+                if (line - firstLine < semanticLineLimit) {
+                    trimmed = trimmed.map { token ->
+                        if (!token.isNavigable) token else SemanticColors.keyAt(psiFile, token.sourceOffset)?.let(token::withKey) ?: token
+                    }
+                }
                 val calls = callEnds.subMap(from + 1, true, lineEnd, true).map { (callEnd, call) ->
                     // 호출식 마지막 글자를 담은 토큰 뒤에 힌트를 붙인다.
                     val index = trimmed.indexOfLast { token -> token.sourceOffset < callEnd }

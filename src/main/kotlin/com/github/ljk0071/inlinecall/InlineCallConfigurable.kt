@@ -15,9 +15,11 @@ class InlineCallConfigurable : BoundConfigurable(InlineCallBundle.message("setti
     override fun apply() {
         val options = InlineCallSettings.getInstance().state
         val mergeChainsBefore = options.mergeChains
+        val maxLinesBefore = options.maxLines
         super.apply()
         val mergeChainsChanged = options.mergeChains != mergeChainsBefore
-        ExpandedCalls.settingsChanged(recompute = mergeChainsChanged)
+        // 의미 분석 색은 최대 줄 수까지만 계산해 두므로 늘어나면 다시 계산한다.
+        ExpandedCalls.settingsChanged(recompute = mergeChainsChanged || options.maxLines > maxLinesBefore)
         // 체인 합치기가 바뀌면 호출부 힌트 위치/라벨도 바뀌므로 힌트를 다시 수집한다.
         if (mergeChainsChanged) {
             for (project in ProjectManager.getInstance().openProjects) {
