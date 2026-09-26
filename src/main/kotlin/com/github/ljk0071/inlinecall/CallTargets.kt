@@ -16,6 +16,7 @@ import com.intellij.psi.PsiMethod
 import com.intellij.psi.PsiNameIdentifierOwner
 import com.intellij.psi.PsiPolyVariantReference
 import org.jetbrains.uast.UCallExpression
+import org.jetbrains.uast.UClass
 import org.jetbrains.uast.UElement
 import org.jetbrains.uast.UExpression
 import org.jetbrains.uast.UMethod
@@ -73,21 +74,37 @@ object CallTargets {
     }
 
     /**
-     * 소스에 있는 메서드 자신의 선언. Java 는 실제 PsiMethod, Kotlin 은 KtNamedFunction 만 인정한다.
-     * 합성 메서드는 UAST 소스가 없거나(위치 없음) 클래스/필드/파라미터/프로퍼티/접근자라서 null.
+     * 펼쳐 보여줄 소스 선언. 없으면(보여줄 것이 없는 합성 메서드) null.
+     * - Java 는 실제 PsiMethod, Kotlin 은 KtNamedFunction
+     * - Kotlin 프로퍼티 getter/setter 는 get()/set() 을 직접 작성했을 때만 그 프로퍼티 선언(KtProperty)
+     * - enum 의 values()/valueOf() 는 컴파일러가 만들지만 enum 클래스 선언(본문 대신 상수 목록을 보여준다)
+     * record 암묵 접근자, data class copy()/componentN(), 기본 getter/setter 등은 null.
      */
     private fun ownDeclaration(method: PsiMethod): PsiElement? {
-        val source = method.toUElementOfType<UMethod>()?.sourcePsi ?: return null
-        if (!source.isPhysical || source.textRange == null) return null
-        return when {
-            source is PsiMethod -> source
+        val uMethod = method.toUElementOfType<UMethod>()
+        val source = uMethod?.sourcePsi?.takeIf { it.isPhysical && it.textRange != null }
+        if (source != null) {
             // Kotlin 플러그인이 없을 때 클래스를 로드하지 않도록 이름으로 비교한다.
-            source.javaClass.name == KT_NAMED_FUNCTION -> source
-            else -> null
+            when {
+                source is PsiMethod -> return source
+                source.javaClass.name == KT_NAMED_FUNCTION -> return source
+                source.javaClass.name == KT_PROPERTY_ACCESSOR && uMethod.uastBody != null -> return source.parent
+            }
         }
+        return enumOfSyntheticMethod(method)
+    }
+
+    /** enum 의 컴파일러 생성 메서드(values(), valueOf(String))면 그 enum 클래스의 소스 선언 */
+    private fun enumOfSyntheticMethod(method: PsiMethod): PsiElement? {
+        val enumClass = method.containingClass?.takeIf { it.isEnum } ?: return null
+        val params = method.parameterList.parametersCount
+        val synthetic = (method.name == "values" && params == 0) || (method.name == "valueOf" && params == 1)
+        if (!synthetic) return null
+        return enumClass.toUElementOfType<UClass>()?.sourcePsi?.takeIf { it.isPhysical && it.textRange != null }
     }
 
     private const val KT_NAMED_FUNCTION = "org.jetbrains.kotlin.psi.KtNamedFunction"
+    private const val KT_PROPERTY_ACCESSOR = "org.jetbrains.kotlin.psi.KtPropertyAccessor"
 
     /** 실제 소스 선언 PSI (Kotlin light method 이면 KtNamedFunction). [isProjectDeclaration] 을 통과한 메서드에 쓴다. */
     fun declarationOf(method: PsiMethod): PsiElement = ownDeclaration(method) ?: method.navigationElement

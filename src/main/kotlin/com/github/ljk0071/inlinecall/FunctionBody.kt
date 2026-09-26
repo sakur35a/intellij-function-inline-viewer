@@ -19,6 +19,8 @@ import com.intellij.psi.PsiWhiteSpace
 import com.intellij.psi.SmartPointerManager
 import com.intellij.psi.SmartPsiElementPointer
 import com.intellij.psi.SyntaxTraverser
+import org.jetbrains.uast.UClass
+import org.jetbrains.uast.UEnumConstant
 import org.jetbrains.uast.UMethod
 import org.jetbrains.uast.toUElementOfType
 import java.util.TreeMap
@@ -102,12 +104,28 @@ class FunctionBody(
             val file = psiFile.virtualFile ?: return null
             val document = PsiDocumentManager.getInstance(psiFile.project).getDocument(psiFile) ?: return null
 
-            val firstCode = generateSequence(declaration.firstChild) { it.nextSibling }
-                .firstOrNull { it !is PsiComment && it !is PsiWhiteSpace && it.textLength > 0 }
-            // 합성(가상) 요소는 위치가 없다. resolveProjectMethod 에서 걸러지지만 여기서도 방어한다.
-            val range = declaration.textRange ?: return null
-            val start = firstCode?.textRange?.startOffset ?: range.startOffset
-            val end = range.endOffset
+            // enum 의 values()/valueOf() 는 컴파일러가 만든 메서드라 본문 대신 enum 상수 선언부를 보여준다.
+            val enumClass = declaration.toUElementOfType<UClass>()?.takeIf { it.isEnum }
+            val header: BodyLine?
+            val start: Int
+            val end: Int
+            if (enumClass != null) {
+                header = note(InlineCallBundle.message("body.enum.constants", enumClass.name ?: "enum"))
+                val constants = enumClass.fields.filterIsInstance<UEnumConstant>().mapNotNull { it.sourcePsi?.textRange }
+                if (constants.isEmpty()) {
+                    return FunctionBody(file, document.modificationStamp, listOf(header), pointerTo(declaration), hasBody = true)
+                }
+                start = constants.minOf { it.startOffset }
+                end = constants.maxOf { it.endOffset }
+            } else {
+                header = null
+                val firstCode = generateSequence(declaration.firstChild) { it.nextSibling }
+                    .firstOrNull { it !is PsiComment && it !is PsiWhiteSpace && it.textLength > 0 }
+                // 합성(가상) 요소는 위치가 없다. resolveProjectMethod 에서 걸러지지만 여기서도 방어한다.
+                val range = declaration.textRange ?: return null
+                start = firstCode?.textRange?.startOffset ?: range.startOffset
+                end = range.endOffset
+            }
             if (start >= end) return null
 
             val chars = document.immutableCharSequence
@@ -174,18 +192,22 @@ class FunctionBody(
             if (Perf.enabled) {
                 Perf.log("body.semantic", semanticNanos / 1e6, "name=${(declaration as? PsiNamedElement)?.name} identifiers=$semanticTokens")
             }
-            val target = SmartPointerManager.getInstance(psiFile.project).createSmartPsiElementPointer(declaration)
-            val method = declaration.toUElementOfType<UMethod>()
+            val target = pointerTo(declaration)
+            val sourceLines = listOfNotNull(header) + lines
+            // 함수 선언일 때만 본문 유무/재정의를 본다. enum 클래스(주 생성자로도 변환된다)나 Kotlin 프로퍼티는 제외.
+            val method = if (enumClass != null) null else declaration.toUElementOfType<UMethod>()?.takeIf { it.sourcePsi == declaration }
             val hasBody = method?.let { it.uastBody != null } ?: true
             val allLines = when {
-                !hasBody -> lines + implementationLines(method?.javaPsi)
-                method != null && isOverridable(method.javaPsi) -> lines + findOverridesLine(declaration)
-                else -> lines
+                !hasBody -> sourceLines + implementationLines(method?.javaPsi)
+                method != null && isOverridable(method.javaPsi) -> sourceLines + findOverridesLine(declaration)
+                else -> sourceLines
             }
-            return FunctionBody(file, document.modificationStamp, allLines, target, hasBody, sourceLineCount = lines.size)
+            return FunctionBody(file, document.modificationStamp, allLines, target, hasBody, sourceLineCount = sourceLines.size)
         }
 
-        /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
+        private fun pointerTo(element: PsiElement): SmartPsiElementPointer<PsiElement> =
+            SmartPointerManager.getInstance(element.project).createSmartPsiElementPointer(element)
+
         /**
          * 재정의 목록만 담은 본문. "overrides: ▶ find" 를 클릭했을 때 한 단계 아래에 펼친다. 읽기 작업 안에서 호출.
          * 재정의 검색은 계층 전체를 훑으므로 본문을 펼칠 때가 아니라 이 힌트를 클릭할 때만 한다.
@@ -221,6 +243,7 @@ class FunctionBody(
             return BodyLine(listOf(header), listOf(call), nestedOnly = true)
         }
 
+        /** 본문 없는(추상/인터페이스) 메서드 아래에 붙일 구현체 목록 줄. 구현체마다 펼칠 수 있는 힌트 하나. */
         private fun implementationLines(method: PsiMethod?): List<BodyLine> {
             if (method == null) return listOf(note(InlineCallBundle.message("body.no.body")))
             return overridingLines(method, header = "body.implementations", emptyKey = "body.no.implementations", event = "body.impls")

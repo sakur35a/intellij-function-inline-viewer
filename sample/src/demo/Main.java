@@ -25,6 +25,13 @@ public class Main {
         double area = shape.area();
         String description = shape.describe();
 
+        // enum values(): 펼치면 상수 목록. Kotlin 직접 작성 getter/setter 에는 힌트, 기본 getter(getCelsius)에는 없음.
+        Color[] colors = Color.values();
+        Temperature t = new Temperature(20);
+        double f = t.getFahrenheit();
+        t.setFahrenheit(100);
+        double c = t.getCelsius();
+
         // JDK 메서드에는 힌트가 붙지 않아야 한다.
         System.out.println(sum);
     }

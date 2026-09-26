@@ -73,16 +73,19 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         )
     }
 
-    /** 컴파일러가 만든 메서드는 소스에 함수 본문이 없으므로 힌트를 붙이지 않는다(예전엔 enum values() 클릭 시 NPE). */
-    fun testNoHintsForSyntheticJavaMethods() {
+    /**
+     * 컴파일러가 만든 메서드 중 enum values()/valueOf() 만 힌트를 붙이고(펼치면 상수 목록),
+     * record 암묵 접근자는 소스에 본문이 없으므로 붙이지 않는다(직접 작성한 접근자는 붙는다).
+     */
+    fun testSyntheticJavaMethods() {
         doTestProvider(
             "E.java",
             """
             enum E {
                 A;
                 static void m(R r) {
-                    E.values();
-                    E.valueOf("A");
+                    E.values()/*<# ▶ |values() #>*/;
+                    E.valueOf("A")/*<# ▶ |valueOf(name) #>*/;
                     r.x();
                     r.y()/*<# ▶ |y() #>*/;
                 }
@@ -95,7 +98,51 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         )
     }
 
-    fun testNoHintsForSyntheticKotlinMembers() {
+    fun testEnumValuesShowsConstants() {
+        myFixture.configureByText(
+            "E.java",
+            """
+            enum E {
+                RED("r"),
+                GREEN("g");
+                E(String s) {}
+                static void m() { E.values(); }
+            }
+            """.trimIndent(),
+        )
+        val renderer = expandCallEndingWith("E.values()")
+        assertEquals(
+            listOf(InlineCallBundle.message("body.enum.constants", "E"), "RED(\"r\"),", "GREEN(\"g\")"),
+            renderer.visibleText(),
+        )
+    }
+
+    fun testKotlinEnumValuesShowsConstants() {
+        myFixture.configureByText(
+            "K.kt",
+            """
+            enum class Color(val code: String) {
+                RED("r"),
+                GREEN("g");
+            }
+            fun m() = Color.values()
+            """.trimIndent(),
+        )
+        val end = myFixture.editor.document.text.lastIndexOf("Color.values()") + "Color.values()".length
+        val (range, bodies) = inBackground {
+            val (range, methods) = CallTargets.hintAt(myFixture.file, end)!!
+            range to methods.map { CallTargets.body(it)!! }
+        }
+        ExpandedCalls.expand(myFixture.editor, range, bodies, 0)
+        assertEquals(
+            // Kotlin 은 마지막 enum 항목 범위에 ';' 까지 포함된다(원문 그대로).
+            listOf(InlineCallBundle.message("body.enum.constants", "Color"), "RED(\"r\"),", "GREEN(\"g\");"),
+            renderers().single().visibleText(),
+        )
+    }
+
+    /** Kotlin 은 get()/set() 을 직접 작성한 접근자에만 힌트를 붙이고, 펼치면 프로퍼티 선언을 보여준다. */
+    fun testKotlinMembersOnlyWithWrittenAccessors() {
         myFixture.addFileToProject(
             "demo/D.kt",
             """
@@ -103,6 +150,8 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             data class D(val a: Int) {
                 var b: Int = 0
                 val c: Int get() = a + 1
+                var d: Int = 0
+                    set(v) { field = v * 2 }
                 fun f(): Int = a
             }
             """.trimIndent(),
@@ -118,13 +167,37 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
                     d.getA();
                     d.getB();
                     d.setB(2);
-                    d.getC();
+                    d.getC()/*<# ▶ |getC() #>*/;
+                    d.getD();
+                    d.setD(3)/*<# ▶ |setD(v) #>*/;
                     d.f()/*<# ▶ |f() #>*/;
                 }
             }
             """.trimIndent(),
             InlineCallHintsProvider(),
         )
+    }
+
+    fun testKotlinWrittenGetterShowsProperty() {
+        myFixture.addFileToProject(
+            "demo/D.kt",
+            """
+            package demo
+            class D(val a: Int) {
+                /** doc */
+                val c: Int
+                    get() = a + 1
+            }
+            """.trimIndent(),
+        )
+        myFixture.configureByText("Main.java", "package demo;\nclass Main {\n    int m(D d) { return d.getC(); }\n}\n")
+        val end = myFixture.editor.document.text.lastIndexOf("getC()") + "getC()".length
+        val (range, bodies) = inBackground {
+            val (range, methods) = CallTargets.hintAt(myFixture.file, end)!!
+            range to methods.map { CallTargets.body(it)!! }
+        }
+        ExpandedCalls.expand(myFixture.editor, range, bodies, 0)
+        assertEquals(listOf("val c: Int", "    get() = a + 1"), renderers().single().visibleText())
     }
 
     fun testSameLineChainIsMerged() {
