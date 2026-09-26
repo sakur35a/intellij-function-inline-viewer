@@ -18,6 +18,7 @@ import com.intellij.pom.Navigatable
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.Cursor
+import java.awt.Point
 import java.awt.event.MouseEvent
 import javax.swing.SwingUtilities
 
@@ -58,10 +59,14 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
         if (renderer == null) {
-            // 플랫폼은 Ctrl 을 눌렀을 때만 손가락 커서를 보여주므로, 클릭할 수 있다는 표시를 직접 한다.
+            // 플랫폼은 Ctrl 을 눌렀을 때만 손가락 커서를 보여주므로, 토글되는 글자 영역 위에서만 직접 표시한다(여백은 토글되지 않음).
             if (inlay != null && isOurHint(inlay)) {
+                val bounds = inlay.bounds
+                val point = e.mouseEvent.point
+                val overText = bounds != null &&
+                    DeclarativeHint.isOverText(inlay, Point(point.x - bounds.x, point.y - bounds.y)) == true
                 hoveredInlay = inlay
-                (e.editor as? EditorEx)?.setCustomCursor(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
+                (e.editor as? EditorEx)?.setCustomCursor(this, if (overText) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
             }
             return
         }
@@ -143,13 +148,13 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     /** 힌트에 보이는 화살표(▶/▼)에 맞춰 본문을 펼치거나 접는다. 화살표를 읽을 수 없으면 클릭마다 토글한다. */
     internal fun syncWithHint(editor: Editor, inlay: Inlay<*>) {
         val offset = inlay.offset
-        val shown = HintArrow.isExpanded(inlay)
+        val shown = DeclarativeHint.isExpanded(inlay)
         if (shown == null) {
             toggle(editor, offset)
             return
         }
         if (shown == ExpandedCalls.isExpanded(editor, offset)) return
-        if (shown) expand(editor, offset) { HintArrow.isExpanded(inlay) != false } else ExpandedCalls.collapse(editor, offset)
+        if (shown) expand(editor, offset) { DeclarativeHint.isExpanded(inlay) != false } else ExpandedCalls.collapse(editor, offset)
     }
 
     private fun toggle(editor: Editor, callEndOffset: Int) {

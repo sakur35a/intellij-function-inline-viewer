@@ -347,7 +347,7 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
         val listener = InlineCallMouseListener()
-        assertEquals(false, HintArrow.isExpanded(ourHint()))
+        assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
 
         // 화살표는 ▶ 그대로인데 본문만 펼쳐진 어긋난 상태 -> 맞춰서 접는다.
         expandCallEndingWith("helper()")
@@ -363,7 +363,7 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         expandCallEndingWith("helper()")
         edit { myFixture.editor.document.insertString(0, " ") }
         myFixture.doHighlighting()
-        assertEquals(true, HintArrow.isExpanded(ourHint()))
+        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
 
         // 화살표 ▼ 인데 본문이 없으면 펼친다.
         val end = myFixture.editor.document.text.lastIndexOf("helper()") + "helper()".length
@@ -391,16 +391,20 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         }
 
         val middle = ourHint().widthInPixels / 2
+        // 손가락 커서 판정은 플랫폼이 토글하는 영역과 같아야 한다.
+        assertEquals(true, DeclarativeHint.isOverText(ourHint(), Point(middle, 2)))
+        assertEquals(false, DeclarativeHint.isOverText(ourHint(), Point(0, 2)))
+
         platformClick(middle)
-        assertEquals(true, HintArrow.isExpanded(ourHint()))
+        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
         assertEquals(1, ExpandedCalls.markerCount(editor))
 
         platformClick(0) // 왼쪽 여백: 플랫폼이 토글하지 않는다
-        assertEquals(true, HintArrow.isExpanded(ourHint()))
+        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
         assertEquals(1, ExpandedCalls.markerCount(editor))
 
         platformClick(middle)
-        assertEquals(false, HintArrow.isExpanded(ourHint()))
+        assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
         assertEquals(0, ExpandedCalls.markerCount(editor))
     }
 
