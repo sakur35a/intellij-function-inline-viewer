@@ -42,6 +42,12 @@
     <depends>com.intellij.java</depends>
     <depends optional="true" config-file="inline-call-kotlin.xml">org.jetbrains.kotlin</depends>
 
+    <extensions defaultExtensionNs="org.jetbrains.kotlin">
+        <!-- UAST 만 사용하므로 K1/K2 모두 동작한다. 선언하지 않으면 K2 모드에서 Kotlin 설정(inline-call-kotlin.xml)이 로드되지 않는다.
+             Plugin Verifier 는 선택 의존성 설정 파일을 합치지 않으므로 메인 plugin.xml 에 둔다. -->
+        <supportsKotlinPluginMode supportsK2="true"/>
+    </extensions>
+
     <resource-bundle>messages.InlineCallBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">

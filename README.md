@@ -42,8 +42,7 @@ Performance measurement: `./gradlew runIde -Pperf -PopenProject=<path>` records 
 ## Verification
 
 `./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2. Internal API usage is reported but does not fail
-the task (see below). One compatibility warning about `supportsKotlinPluginMode` is expected: the declaration lives in the
-optional `inline-call-kotlin.xml`, which the verifier does not merge.
+the task (see below).
 
 ## Notes on internal APIs
 

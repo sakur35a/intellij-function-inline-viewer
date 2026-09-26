@@ -1,9 +1,13 @@
 package com.github.sakur35a.functioninlineviewer
 
+import com.intellij.lang.Language
 import com.intellij.openapi.editor.DefaultLanguageHighlighterColors
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.editor.highlighter.EditorHighlighterFactory
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.fileTypes.SyntaxHighlighter
+import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
+import com.intellij.psi.tree.IElementType
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiComment
@@ -152,6 +156,19 @@ class FunctionBody(
             }
             if (start >= end) return null
 
+            // 토큰 색 키는 토큰 언어의 SyntaxHighlighter 에서 얻는다(HighlighterIterator.getTextAttributesKeys 는 실험 API).
+            // 파일 언어의 것을 먼저 쓰고(문자열 이스케이프처럼 언어가 ANY 인 토큰도 여기서 색이 정해진다),
+            // 모르는 토큰(다른 언어의 주입 토큰 등)은 토큰 언어의 것으로 찾는다.
+            val fileHighlighter = SyntaxHighlighterFactory.getSyntaxHighlighter(psiFile.language, psiFile.project, file)
+            val highlighters = HashMap<Language, SyntaxHighlighter?>()
+            fun tokenKeys(type: IElementType): Array<TextAttributesKey> {
+                fileHighlighter?.getTokenHighlights(type)?.takeIf { it.isNotEmpty() }?.let { return it }
+                if (type.language == Language.ANY || type.language == psiFile.language) return TextAttributesKey.EMPTY_ARRAY
+                return highlighters.getOrPut(type.language) {
+                    SyntaxHighlighterFactory.getSyntaxHighlighter(type.language, psiFile.project, file)
+                }?.getTokenHighlights(type) ?: TextAttributesKey.EMPTY_ARRAY
+            }
+
             val chars = document.immutableCharSequence
             // 파일 전체가 아니라 선언 범위만 렉싱한다(선언 시작은 문자열/주석 밖이므로 렉서 초기 상태에서 시작해도 된다).
             // 이터레이터 오프셋은 [start] 기준이다.
@@ -188,7 +205,7 @@ class FunctionBody(
                     val e = minOf(it.end + start, lineEnd)
                     if (s < e) {
                         val raw = chars.substring(s, e)
-                        tokens += BodyToken(raw.replace("\t", "    "), s, it.textAttributesKeys, exact = '\t' !in raw)
+                        tokens += BodyToken(raw.replace("\t", "    "), s, tokenKeys(it.tokenType), exact = '\t' !in raw)
                     }
                     it.advance()
                 }

@@ -1,9 +1,5 @@
 <idea-plugin>
-    <extensions defaultExtensionNs="org.jetbrains.kotlin">
-        <!-- UAST 만 사용하므로 K1/K2 모두 동작한다. 선언하지 않으면 K2 모드에서 이 설정이 로드되지 않는다. -->
-        <supportsKotlinPluginMode supportsK2="true"/>
-    </extensions>
-
+    <!-- K2 지원 선언(supportsKotlinPluginMode)은 Plugin Verifier 가 메인 plugin.xml 만 보므로 거기에 둔다. -->
     <extensions defaultExtensionNs="com.intellij">
         <codeInsight.declarativeInlayProvider
                 language="kotlin"

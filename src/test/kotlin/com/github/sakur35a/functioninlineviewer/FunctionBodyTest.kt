@@ -35,6 +35,57 @@ class FunctionBodyTest : BasePlatformTestCase() {
         assertTrue("keyword should be highlighted", body.token("return").keys.isNotEmpty())
     }
 
+    /** 토큰 색 키가 에디터 하이라이터가 주는 키(문서 주석, 이스케이프, 문자열 템플릿 포함)와 같은지 */
+    private fun assertKeysMatchEditorHighlighter(body: FunctionBody) {
+        val file = myFixture.file.virtualFile
+        val text = myFixture.editor.document.text
+        val highlighter = com.intellij.openapi.editor.highlighter.EditorHighlighterFactory.getInstance()
+            .createEditorHighlighter(project, file).also { it.setText(text) }
+        for (token in body.lines.flatMap { it.tokens }) {
+            val expected = highlighter.createIterator(token.sourceOffset).textAttributesKeys.toList()
+            // 의미 분석 색은 렉서 키 뒤에 덧붙으므로 앞부분만 비교한다.
+            assertEquals("keys of '${token.text}'", expected, token.keys.toList().take(expected.size))
+        }
+    }
+
+    fun testTokenKeysMatchEditorHighlighterJava() {
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                /** Doc with {@link A} and @return tag. */
+                String helper(int x) {
+                    // line comment
+                    char c = '\n';
+                    return "a\tb" + x + c + 0x1F + true + null;
+                }
+            }
+            """.trimIndent(),
+        )
+        val body = CallTargets.body(javaMethod("helper"))!!
+        assertKeysMatchEditorHighlighter(body)
+    }
+
+    fun testTokenKeysMatchEditorHighlighterKotlin() {
+        myFixture.configureByText(
+            "A.kt",
+            """
+            /** KDoc with [helper] and @param x. */
+            fun helper(x: Int): String {
+                // line comment
+                val s = "a\t${'$'}{x + 1} ${'$'}x"
+                return s + 'c' + 0x1F + true + null
+            }
+            """.trimIndent(),
+        )
+        val function = PsiTreeUtil.findChildOfType(myFixture.file, KtNamedFunction::class.java)!!
+        // Kotlin 의미 분석(K2)은 EDT 에서 금지되므로 실제 코드처럼 백그라운드 읽기 작업에서 만든다.
+        val body = com.intellij.openapi.application.ApplicationManager.getApplication().executeOnPooledThread<FunctionBody> {
+            com.intellij.openapi.application.ReadAction.compute<FunctionBody, RuntimeException> { FunctionBody.of(function) }
+        }.get()!!
+        assertKeysMatchEditorHighlighter(body)
+    }
+
     fun testNavigateToJavaCallee() {
         myFixture.configureByText(
             "A.java",

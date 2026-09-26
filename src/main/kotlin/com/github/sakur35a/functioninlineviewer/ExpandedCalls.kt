@@ -3,7 +3,7 @@ package com.github.sakur35a.functioninlineviewer
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
-import com.intellij.openapi.application.runReadAction
+import com.intellij.openapi.application.runReadActionBlocking
 import com.intellij.openapi.editor.Document
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
@@ -179,7 +179,7 @@ object ExpandedCalls {
         fun refreshNow(force: Boolean) {
             val project = editor.project ?: return
             PsiDocumentManager.getInstance(project).commitAllDocuments()
-            apply(runReadAction { pending().map { compute(it, force) } })
+            apply(runReadActionBlocking { pending().map { compute(it, force) } })
         }
 
         /** [force] 면 원본이 그대로인 본문도 재사용하지 않고 다시 만든다. */
