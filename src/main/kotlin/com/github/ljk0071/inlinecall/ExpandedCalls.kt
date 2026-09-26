@@ -49,10 +49,18 @@ object ExpandedCalls {
         expansions.expand(callRange, bodies, indentPx)
     }
 
+    /**
+     * EDT 전용. 설정이 바뀌면 열린 모든 에디터의 펼친 본문에 반영한다.
+     * [recompute] 면(체인 합치기 변경) 본문 안의 힌트 규칙이 바뀌므로 원본이 그대로여도 다시 계산한다.
+     */
+    fun settingsChanged(recompute: Boolean) {
+        for (editor in EditorFactory.getInstance().allEditors) editor.getUserData(KEY)?.applySettings(recompute)
+    }
+
     /** 테스트용: 대기 중인 재계산을 즉시 동기로 수행한다. */
     @TestOnly
-    fun refreshNow(editor: Editor) {
-        editor.getUserData(KEY)?.refreshNow()
+    fun refreshNow(editor: Editor, force: Boolean = false) {
+        editor.getUserData(KEY)?.refreshNow(force)
     }
 
     @TestOnly
@@ -68,7 +76,7 @@ object ExpandedCalls {
             // 호출부가 있는 문서 또는 펼친 본문의 원본 문서가 바뀌면 다시 계산한다.
             EditorFactory.getInstance().eventMulticaster.addDocumentListener(object : DocumentListener {
                 override fun documentChanged(event: DocumentEvent) {
-                    if (isRelevant(event.document)) scheduleRefresh()
+                    if (isRelevant(event.document)) scheduleRefresh(force = false)
                 }
             }, this)
         }
@@ -94,6 +102,16 @@ object ExpandedCalls {
             entries[editor.document.createRangeMarker(callRange)] = inlay
         }
 
+        fun applySettings(recompute: Boolean) {
+            val options = InlineCallSettings.getInstance().state
+            for (inlay in entries.values) {
+                if (!inlay.isValid) continue
+                inlay.renderer.updateLimits(options.maxLines, options.maxDepth)
+                inlay.update()
+            }
+            if (recompute) scheduleRefresh(force = true)
+        }
+
         private fun remove(marker: RangeMarker) {
             entries.remove(marker)?.let { if (it.isValid) Disposer.dispose(it) }
             marker.dispose()
@@ -116,26 +134,35 @@ object ExpandedCalls {
         private fun pending(): List<Pending> =
             entries.map { (marker, inlay) -> Pending(marker, inlay, inlay.renderer.version, inlay.renderer.snapshot()) }
 
-        private fun scheduleRefresh() {
+        /** 강제 재계산 요청이 뒤이은 일반 재계산에 취소돼도 사라지지 않도록, 반영될 때까지 유지한다. EDT 전용. */
+        private var forceRequested = false
+
+        private fun scheduleRefresh(force: Boolean) {
             val project = editor.project ?: return
             val pending = pending()
             if (pending.isEmpty()) return
+            if (force) forceRequested = true
+            val forceNow = forceRequested
             // 입력이 이어지면 이전 계산은 취소되고(coalesce) 마지막 것만 반영된다.
-            ReadAction.nonBlocking<List<Result>> { pending.map(::compute) }
+            ReadAction.nonBlocking<List<Result>> { pending.map { compute(it, forceNow) } }
                 .withDocumentsCommitted(project)
                 .expireWith(this)
                 .coalesceBy(this)
-                .finishOnUiThread(ModalityState.defaultModalityState(), ::apply)
+                .finishOnUiThread(ModalityState.defaultModalityState()) { results ->
+                    if (forceNow) forceRequested = false
+                    apply(results)
+                }
                 .submit(AppExecutorUtil.getAppExecutorService())
         }
 
-        fun refreshNow() {
+        fun refreshNow(force: Boolean) {
             val project = editor.project ?: return
             PsiDocumentManager.getInstance(project).commitAllDocuments()
-            apply(ReadAction.compute<List<Result>, RuntimeException> { pending().map(::compute) })
+            apply(ReadAction.compute<List<Result>, RuntimeException> { pending().map { compute(it, force) } })
         }
 
-        private fun compute(pending: Pending): Result {
+        /** [force] 면 원본이 그대로인 본문도 재사용하지 않고 다시 만든다. */
+        private fun compute(pending: Pending, force: Boolean): Result {
             val marker = pending.marker
             if (!marker.isValid || marker.startOffset >= marker.endOffset) return Result(pending, null)
             val project = editor.project ?: return Result(pending, null)
@@ -143,21 +170,21 @@ object ExpandedCalls {
             // 호출부를 다시 resolve 해서 대상이 바뀌었거나 사라졌는지 확인한다.
             val (_, methods) = CallTargets.hintAt(psiFile, marker.endOffset) ?: return Result(pending, null)
             val roots = methods.mapIndexedNotNull { index, method ->
-                rebuild(CallTargets.declarationOf(method), pending.snapshot.getOrNull(index), depth = 0)
+                rebuild(CallTargets.declarationOf(method), pending.snapshot.getOrNull(index), depth = 0, force)
             }
             return Result(pending, roots.ifEmpty { null })
         }
 
         /** [old] 의 펼침 상태를 유지한 채 [declaration] 본문을 다시 만든다. 원본이 그대로면 기존 본문을 재사용한다. */
-        private fun rebuild(declaration: PsiElement, old: BodySnapshot?, depth: Int): BodyNode? {
-            val reusable = old?.body?.takeIf { it.isUpToDate() && it.target.element == declaration }
+        private fun rebuild(declaration: PsiElement, old: BodySnapshot?, depth: Int, force: Boolean): BodyNode? {
+            val reusable = old?.body?.takeIf { !force && it.isUpToDate() && it.target.element == declaration }
             val body = reusable ?: FunctionBody.of(declaration) ?: return null
             val node = BodyNode(body, depth)
             if (old == null) return node
             for (call in body.calls) {
                 val oldChildren = old.children[call.key] ?: continue
                 val children = call.targets.mapIndexedNotNull { index, pointer ->
-                    pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1) }
+                    pointer.element?.let { rebuild(it, oldChildren.getOrNull(index), depth + 1, force) }
                 }
                 if (children.isNotEmpty()) node.children[call] = children
             }

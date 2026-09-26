@@ -1,6 +1,8 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.openapi.options.BoundConfigurable
+import com.intellij.openapi.project.ProjectManager
 import com.intellij.openapi.ui.DialogPanel
 import com.intellij.ui.dsl.builder.bindIntValue
 import com.intellij.ui.dsl.builder.bindSelected
@@ -8,6 +10,21 @@ import com.intellij.ui.dsl.builder.panel
 
 /** Settings > Editor > Inline Call Body */
 class InlineCallConfigurable : BoundConfigurable(InlineCallBundle.message("settings.display.name")) {
+
+    /** 저장한 뒤 이미 펼쳐진 본문과 힌트에 바로 반영한다. */
+    override fun apply() {
+        val options = InlineCallSettings.getInstance().state
+        val mergeChainsBefore = options.mergeChains
+        super.apply()
+        val mergeChainsChanged = options.mergeChains != mergeChainsBefore
+        ExpandedCalls.settingsChanged(recompute = mergeChainsChanged)
+        // 체인 합치기가 바뀌면 호출부 힌트 위치/라벨도 바뀌므로 힌트를 다시 수집한다.
+        if (mergeChainsChanged) {
+            for (project in ProjectManager.getInstance().openProjects) {
+                DaemonCodeAnalyzer.getInstance(project).restart("inline call settings changed")
+            }
+        }
+    }
 
     override fun createPanel(): DialogPanel {
         val options = InlineCallSettings.getInstance().state

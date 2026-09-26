@@ -38,8 +38,8 @@ sealed interface BodyHit {
 class FunctionBodyRenderer(
     bodies: List<FunctionBody>,
     private val indentPx: Int,
-    private val maxLines: Int = DEFAULT_MAX_LINES,
-    private val maxDepth: Int = DEFAULT_MAX_DEPTH,
+    private var maxLines: Int = DEFAULT_MAX_LINES,
+    private var maxDepth: Int = DEFAULT_MAX_DEPTH,
 ) : EditorCustomElementRenderer {
 
     companion object {
@@ -114,6 +114,18 @@ class FunctionBodyRenderer(
     fun replaceRoots(newRoots: List<BodyNode>) {
         hovered = null
         roots = newRoots
+        changed()
+    }
+
+    /** EDT 전용. 설정이 바뀌면 호출. 새 최대 깊이보다 깊게 펼쳐진 본문은 접는다. 호출 후 inlay.update() 필요. */
+    fun updateLimits(maxLines: Int, maxDepth: Int) {
+        if (maxLines == this.maxLines && maxDepth == this.maxDepth) return
+        this.maxLines = maxLines
+        this.maxDepth = maxDepth
+        fun prune(node: BodyNode) {
+            if (!canExpand(node)) node.children.clear() else node.children.values.forEach { it.forEach(::prune) }
+        }
+        roots.forEach(::prune)
         changed()
     }
 
