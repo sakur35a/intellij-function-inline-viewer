@@ -49,7 +49,8 @@ the task (see below).
 Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The version is computed by
 [git-semver-plugin](https://github.com/jmongard/Git.SemVersioning.Gradle) from the latest `vX.Y.Z` tag and the commits after
 it: `fix:` bumps the patch, `feat:` the minor, `feat!:` / `BREAKING CHANGE:` the major version. Builds between releases get a
-`-SNAPSHOT` suffix.
+`-SNAPSHOT` suffix. The plugin's change notes are generated at build time from the `feat:`, `fix:` and `perf:` commits since
+the previous release tag, so `plugin.xml` has no `<change-notes>`.
 
 ```bash
 ./gradlew printVersion      # version of the current checkout

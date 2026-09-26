@@ -31,12 +31,7 @@
     The hints can be switched off under <i>Settings | Editor | Inlay Hints | Other</i>.</p>
     ]]></description>
 
-    <change-notes><![CDATA[
-    <b>1.0.0</b>
-    <ul>
-      <li>Initial release.</li>
-    </ul>
-    ]]></change-notes>
+    <!-- change-notes 는 빌드 시 git 커밋(Conventional Commits)에서 만든다(build.gradle.kts 의 changeNotes). -->
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.java</depends>

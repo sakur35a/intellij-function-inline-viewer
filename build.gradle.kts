@@ -43,8 +43,37 @@ kotlin {
     jvmToolchain(21)
 }
 
+/**
+ * Marketplace 의 change-notes. 직전 릴리스 태그 이후의 Conventional Commits 중 feat/fix/perf 를 모은다.
+ * HEAD^ 기준으로 태그를 찾으므로, 릴리스 커밋(태그가 달린 HEAD)에서 빌드해도 그 릴리스의 변경이 나온다.
+ */
+val gitChangeNotes: Provider<String> = run {
+    val releaseVersion = version.toString()
+    val previousTag = providers.exec {
+        commandLine("git", "describe", "--tags", "--abbrev=0", "--match", "v*", "HEAD^")
+        isIgnoreExitValue = true
+    }.standardOutput.asText.map { it.trim() }
+    val subjects = previousTag.flatMap { tag ->
+        providers.exec {
+            commandLine(listOf("git", "log", "--format=%s") + if (tag.isEmpty()) listOf("HEAD") else listOf("$tag..HEAD"))
+        }.standardOutput.asText
+    }
+    subjects.map { log ->
+        val sections = linkedMapOf("feat" to "New", "fix" to "Fixed", "perf" to "Performance")
+        val pattern = Regex("""^(\w+)(?:\([^)]*\))?!?:\s*(.+)$""")
+        val byType = log.lines().mapNotNull { pattern.find(it.trim()) }
+            .groupBy({ it.groupValues[1] }, { it.groupValues[2].replaceFirstChar(Char::uppercaseChar) })
+        fun escape(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        val body = sections.mapNotNull { (type, title) ->
+            byType[type]?.let { items -> "<b>$title</b><ul>${items.joinToString("") { "<li>${escape(it)}</li>" }}</ul>" }
+        }.joinToString("")
+        "<b>$releaseVersion</b><br/>" + body.ifEmpty { "<ul><li>Maintenance release.</li></ul>" }
+    }
+}
+
 intellijPlatform {
     pluginConfiguration {
+        changeNotes = gitChangeNotes
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
             // 상한은 두지 않는다. 새 IDE 버전과의 호환은 verifyPlugin 으로 확인한다.
