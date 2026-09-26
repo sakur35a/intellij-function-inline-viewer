@@ -1,5 +1,6 @@
 package com.github.ljk0071.inlinecall
 
+import com.intellij.codeInsight.hints.declarative.CollapseState
 import com.intellij.codeInsight.hints.declarative.HintColorKind
 import com.intellij.codeInsight.hints.declarative.HintFormat
 import com.intellij.codeInsight.hints.declarative.InlayHintsCollector
@@ -43,10 +44,23 @@ class InlineCallHintsProvider : InlayHintsProvider {
                 tooltip = "Click to show/hide the body of ${methods.joinToString { it.name }}",
                 hintFormat = FORMAT,
             ) {
-                // 플랫폼 토글(collapsibleList/toggleButton)은 사용자가 한 번 누른 상태를 계속 유지하고
-                // provider 가 넘기는 상태를 무시해서, 자동으로 접힐 때 등 실제 펼침 상태와 어긋났다. 화살표는 직접 정한다.
-                text(if (expanded) "▼ " else "▶ ")
-                label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
+                // ▶/▼ 전환은 플랫폼 토글이 즉시 처리한다. 여기서 정하는 상태는 힌트가 처음 만들어질 때만 쓰이고
+                // (플랫폼은 사용자가 바꾼 상태를 유지한다), 본문은 InlineCallMouseListener 가 화면의 화살표에 맞춘다.
+                collapsibleList(
+                    state = if (expanded) CollapseState.Expanded else CollapseState.Collapsed,
+                    expandedState = {
+                        toggleButton {
+                            text("▼ ")
+                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
+                        }
+                    },
+                    collapsedState = {
+                        toggleButton {
+                            text("▶ ")
+                            label.chunked(MAX_TEXT_LENGTH).forEach { text(it) }
+                        }
+                    },
+                )
             }
         }
     }

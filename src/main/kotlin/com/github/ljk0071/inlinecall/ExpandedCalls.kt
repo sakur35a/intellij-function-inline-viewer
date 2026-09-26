@@ -86,7 +86,6 @@ object ExpandedCalls {
         fun collapse(callEndOffset: Int): Boolean {
             val marker = entries.keys.firstOrNull { it.isValid && it.endOffset == callEndOffset } ?: return false
             remove(marker)
-            refreshHints()
             return true
         }
 
@@ -100,11 +99,7 @@ object ExpandedCalls {
                 FunctionBodyRenderer(bodies, indentPx, options.maxLines, options.maxDepth),
             ) ?: return
             entries[editor.document.createRangeMarker(callRange)] = inlay
-            refreshHints()
         }
-
-        /** 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞춘다. */
-        private fun refreshHints() = InlineCallMouseListener.recomputeHints(editor)
 
         fun applySettings(recompute: Boolean) {
             val options = InlineCallSettings.getInstance().state
@@ -205,23 +200,20 @@ object ExpandedCalls {
         }
 
         private fun apply(results: List<Result>) {
-            var removed = false
             for (result in results) {
                 val pending = result.pending
                 val inlay = entries[pending.marker] ?: continue
                 // 계산하는 사이 사용자가 펼치거나 접었으면 그 상태를 우선한다(다음 변경 때 다시 계산된다).
                 if (inlay !== pending.inlay || inlay.renderer.version != pending.version) continue
                 val roots = result.roots
+                // 자동으로 접히는 건 호출이 지워졌거나 더 이상 프로젝트 함수 호출이 아닐 때라 호출부 힌트도 함께 사라진다.
                 if (roots == null || !inlay.isValid) {
                     remove(pending.marker)
-                    removed = true
                 } else {
                     inlay.renderer.replaceRoots(roots)
                     inlay.update()
                 }
             }
-            // 호출부 힌트의 ▼ 표시를 되돌리기 위해 힌트를 다시 수집한다.
-            if (removed) refreshHints()
         }
 
         override fun dispose() {

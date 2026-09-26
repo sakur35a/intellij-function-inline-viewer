@@ -1,7 +1,13 @@
 package com.github.ljk0071.inlinecall
 
 import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
-import com.intellij.codeInsight.hints.declarative.impl.views.TextInlayPresentationEntry
+import com.intellij.openapi.application.impl.NonBlockingReadActionImpl
+import com.intellij.openapi.editor.Inlay
+import com.intellij.openapi.editor.event.EditorMouseEvent
+import com.intellij.openapi.editor.event.EditorMouseEventArea
+import java.awt.Point
+import java.awt.event.MouseEvent
+import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.command.WriteCommandAction
@@ -327,42 +333,75 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertTrue("fresh body must allow navigation", renderers().single().roots.single().body.isUpToDate())
     }
 
-    /** 에디터에 실제로 그려진 이 플러그인 힌트의 텍스트(테스트 전용으로 플랫폼 내부 렌더러를 읽는다). */
-    private fun hintTexts(): List<String> =
+    private fun ourHint(): Inlay<*> =
         myFixture.editor.inlayModel.getInlineElementsInRange(0, myFixture.editor.document.textLength)
-            .mapNotNull { it.renderer as? DeclarativeInlayRendererBase<*> }
-            .filter { it.providerId == InlineCallHintsProvider.PROVIDER_ID }
-            .map { renderer ->
-                // getEntries() 는 바이트코드상 public 이지만 Kotlin 메타데이터가 private 이라 리플렉션으로 읽는다.
-                renderer.presentationLists.flatMap { (it.javaClass.getMethod("getEntries").invoke(it) as Array<*>).toList() }
-                    .filterIsInstance<TextInlayPresentationEntry>().joinToString("") { it.text }
-            }
+            .single { (it.renderer as? DeclarativeInlayRendererBase<*>)?.providerId == InlineCallHintsProvider.PROVIDER_ID }
 
-    /** 펼침/접힘/자동 접힘 뒤 힌트가 다시 수집되어 ▶/▼ 가 실제 상태를 따라가야 한다. */
-    fun testArrowFollowsExpansionState() {
+    private fun waitForExpansion() {
+        NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+    }
+
+    /** 본문은 사용자가 보는 화살표(플랫폼 토글)를 따라간다. 화살표가 토글되지 않은 클릭(여백, Cmd+클릭)은 본문도 그대로. */
+    fun testBodyFollowsDisplayedArrow() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
-        assertEquals(listOf("▶ helper()"), hintTexts())
+        val listener = InlineCallMouseListener()
+        assertEquals(false, HintArrow.isExpanded(ourHint()))
 
+        // 화살표는 ▶ 그대로인데 본문만 펼쳐진 어긋난 상태 -> 맞춰서 접는다.
         expandCallEndingWith("helper()")
-        myFixture.doHighlighting()
-        assertEquals(listOf("▼ helper()"), hintTexts())
+        listener.syncWithHint(myFixture.editor, ourHint())
+        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
 
+        // 화살표 ▶ 이고 본문도 접혀 있으면(토글 안 된 클릭) 아무것도 하지 않는다.
+        listener.syncWithHint(myFixture.editor, ourHint())
+        waitForExpansion()
+        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
+
+        // 펼친 상태에서 힌트가 새로 수집되면 처음 상태가 ▼ 이다.
+        expandCallEndingWith("helper()")
+        edit { myFixture.editor.document.insertString(0, " ") }
+        myFixture.doHighlighting()
+        assertEquals(true, HintArrow.isExpanded(ourHint()))
+
+        // 화살표 ▼ 인데 본문이 없으면 펼친다.
         val end = myFixture.editor.document.text.lastIndexOf("helper()") + "helper()".length
         assertTrue(ExpandedCalls.collapse(myFixture.editor, end))
-        myFixture.doHighlighting()
-        assertEquals(listOf("▶ helper()"), hintTexts())
+        listener.syncWithHint(myFixture.editor, ourHint())
+        waitForExpansion()
+        assertEquals(1, ExpandedCalls.markerCount(myFixture.editor))
+    }
 
-        // 다시 펼친 뒤 대상이 사라져 자동으로 접혀도 ▶ 로 돌아온다.
-        expandCallEndingWith("helper()")
+    /** 플랫폼 클릭 처리로 화살표를 실제로 토글한 뒤 본문이 따라오는지. 여백 클릭은 토글도 본문 변화도 없다. */
+    fun testPlatformToggleDrivesBody() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
-        val document = myFixture.editor.document
-        edit { document.replaceString(document.text.indexOf("int helper()"), document.text.indexOf("int helper()") + "int helper()".length, "int other()") }
-        ExpandedCalls.refreshNow(myFixture.editor)
-        edit { document.replaceString(document.text.indexOf("int other()"), document.text.indexOf("int other()") + "int other()".length, "int helper()") }
-        myFixture.doHighlighting()
-        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
-        assertEquals(listOf("▶ helper()"), hintTexts())
+        val listener = InlineCallMouseListener()
+        val editor = myFixture.editor
+
+        fun platformClick(x: Int) {
+            val hint = ourHint()
+            val bounds = hint.bounds!!
+            val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + x, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
+            val event = EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA)
+            (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(event, Point(x, 2), false)
+            listener.syncWithHint(editor, hint)
+            waitForExpansion()
+        }
+
+        val middle = ourHint().widthInPixels / 2
+        platformClick(middle)
+        assertEquals(true, HintArrow.isExpanded(ourHint()))
+        assertEquals(1, ExpandedCalls.markerCount(editor))
+
+        platformClick(0) // 왼쪽 여백: 플랫폼이 토글하지 않는다
+        assertEquals(true, HintArrow.isExpanded(ourHint()))
+        assertEquals(1, ExpandedCalls.markerCount(editor))
+
+        platformClick(middle)
+        assertEquals(false, HintArrow.isExpanded(ourHint()))
+        assertEquals(0, ExpandedCalls.markerCount(editor))
     }
 
     fun testDeletedCallRemovesInlayAndMarker() {

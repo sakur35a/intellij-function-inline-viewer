@@ -1,8 +1,7 @@
 package com.github.ljk0071.inlinecall
 
-import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
-import com.intellij.codeInsight.hints.declarative.impl.DeclarativeInlayHintsPassFactory
 import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
@@ -59,7 +58,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
         if (renderer == null) {
-            // 호출부 힌트는 토글 버튼을 쓰지 않으므로 클릭할 수 있다는 표시(손가락 커서)를 직접 한다.
+            // 플랫폼은 Ctrl 을 눌렀을 때만 손가락 커서를 보여주므로, 클릭할 수 있다는 표시를 직접 한다.
             if (inlay != null && isOurHint(inlay)) {
                 hoveredInlay = inlay
                 (e.editor as? EditorEx)?.setCustomCursor(this, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
@@ -130,43 +129,35 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     }
 
     override fun mouseClicked(e: EditorMouseEvent) {
-        // 힌트의 ▶/▼ 는 펼침 상태로 우리가 그린다(ExpandedCalls 가 상태가 바뀔 때마다 힌트를 다시 수집한다).
+        // 플랫폼 리스너가 ▶/▼ 를 토글할 수 있도록 이벤트를 consume 하지 않는다.
         if (e.area != EditorMouseEventArea.EDITING_AREA) return
         if (!SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
         val inlay = e.inlay ?: return
         if (!isOurHint(inlay)) return
-        toggle(e.editor, inlay.offset)
+        val editor = e.editor
+        // 플랫폼은 글자 영역을 일반 클릭했을 때만 토글한다(여백 클릭, Cmd/Ctrl+클릭은 토글하지 않음).
+        // 리스너 실행 순서는 보장되지 않으므로 이 클릭 처리가 모두 끝난 뒤 화면의 화살표에 본문을 맞춘다.
+        ApplicationManager.getApplication().invokeLater({ syncWithHint(editor, inlay) }, { editor.isDisposed || !inlay.isValid })
     }
 
-    /**
-     * 클릭된 inlay 가 이 플러그인의 힌트인지 확인한다.
-     * providerId 를 공개 API 로 얻을 방법이 없어 내부 API 를 사용한다.
-     */
-    private fun isOurHint(inlay: Inlay<*>): Boolean {
-        if (inlay.placement != Inlay.Placement.INLINE) return false
-        val renderer = inlay.renderer as? DeclarativeInlayRendererBase<*> ?: return false
-        return renderer.providerId == InlineCallHintsProvider.PROVIDER_ID
-    }
-
-    companion object {
-        /**
-         * 호출부 힌트의 ▶/▼ 를 펼침 상태에 맞추기 위해 이 에디터의 힌트를 다시 수집한다. EDT 전용.
-         * 힌트 패스는 문서가 바뀌지 않으면 재수집을 건너뛰고, DaemonCodeAnalyzer.restart 로는 그 기록이 초기화되지 않는다.
-         * 초기화까지 해 주는 방법이 내부 API 뿐이라 여기서만 사용하고, 사라졌으면 restart 로 대신한다(화살표만 늦게/안 바뀜).
-         */
-        fun recomputeHints(editor: Editor) {
-            val project = editor.project ?: return
-            try {
-                DeclarativeInlayHintsPassFactory.scheduleRecompute(editor, project)
-            } catch (_: LinkageError) {
-                val psiFile = PsiDocumentManager.getInstance(project).getPsiFile(editor.document) ?: return
-                DaemonCodeAnalyzer.getInstance(project).restart(psiFile, "inline call body toggled")
-            }
+    /** 힌트에 보이는 화살표(▶/▼)에 맞춰 본문을 펼치거나 접는다. 화살표를 읽을 수 없으면 클릭마다 토글한다. */
+    internal fun syncWithHint(editor: Editor, inlay: Inlay<*>) {
+        val offset = inlay.offset
+        val shown = HintArrow.isExpanded(inlay)
+        if (shown == null) {
+            toggle(editor, offset)
+            return
         }
+        if (shown == ExpandedCalls.isExpanded(editor, offset)) return
+        if (shown) expand(editor, offset) { HintArrow.isExpanded(inlay) != false } else ExpandedCalls.collapse(editor, offset)
     }
 
     private fun toggle(editor: Editor, callEndOffset: Int) {
-        if (ExpandedCalls.collapse(editor, callEndOffset)) return
+        if (!ExpandedCalls.collapse(editor, callEndOffset)) expand(editor, callEndOffset) { true }
+    }
+
+    /** [stillWanted] 는 본문 계산이 끝났을 때 사용자가 그 사이 다시 접지 않았는지 확인한다. */
+    private fun expand(editor: Editor, callEndOffset: Int, stillWanted: () -> Boolean) {
         val project = editor.project ?: return
 
         // resolve 는 EDT 를 막지 않도록 백그라운드 읽기 작업으로 수행한다. 인덱싱 중이면 끝날 때까지 기다린다.
@@ -178,7 +169,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             .expireWhen { editor.isDisposed }
             .finishOnUiThread(ModalityState.defaultModalityState()) { expansion ->
                 Perf.since("expand", start, "bodies=${expansion?.bodies?.size ?: 0}")
-                if (expansion == null || ExpandedCalls.isExpanded(editor, callEndOffset)) return@finishOnUiThread
+                if (expansion == null || ExpandedCalls.isExpanded(editor, callEndOffset) || !stillWanted()) return@finishOnUiThread
                 ExpandedCalls.expand(editor, expansion.callRange, expansion.bodies, indentPx(editor, expansion.callRange.startOffset))
             }
             .submit(AppExecutorUtil.getAppExecutorService())
@@ -202,5 +193,15 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         var firstNonWs = lineStart
         while (firstNonWs < document.getLineEndOffset(line) && text[firstNonWs].isWhitespace()) firstNonWs++
         return editor.offsetToXY(firstNonWs).x - editor.offsetToXY(lineStart).x
+    }
+
+    /**
+     * 클릭된 inlay 가 이 플러그인의 힌트인지 확인한다.
+     * providerId 를 공개 API 로 얻을 방법이 없어 내부 API 를 사용한다.
+     */
+    private fun isOurHint(inlay: Inlay<*>): Boolean {
+        if (inlay.placement != Inlay.Placement.INLINE) return false
+        val renderer = inlay.renderer as? DeclarativeInlayRendererBase<*> ?: return false
+        return renderer.providerId == InlineCallHintsProvider.PROVIDER_ID
     }
 }
