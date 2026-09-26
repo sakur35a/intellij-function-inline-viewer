@@ -3,9 +3,9 @@ package com.github.sakur35a.functioninlineviewer
 import com.intellij.psi.PsiJavaFile
 import com.intellij.testFramework.LightProjectDescriptor
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
-import com.intellij.testFramework.utils.inlays.declarative.DeclarativeInlayHintsProviderTestCase
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
-class InlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase() {
+class CallHintsTest : BasePlatformTestCase() {
 
     // JDK 호출(System.out.println)이 실제로 resolve 되도록 mock JDK 를 붙인다.
     override fun getProjectDescriptor(): LightProjectDescriptor = LightJavaCodeInsightFixtureTestCase.JAVA_21
@@ -21,18 +21,17 @@ class InlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase() {
             }
             """.trimIndent()
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.java",
             """
             package demo;
             public class Main {
                 public static void main(String[] args) {
-                    int sum = MathUtil.add(1, 2)/*<# ▶ |add(a, b) #>*/;
+                    int sum = MathUtil.add(1, 2)/*<# ▶ add(a, b) #>*/;
                     System.out.println(sum);
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 

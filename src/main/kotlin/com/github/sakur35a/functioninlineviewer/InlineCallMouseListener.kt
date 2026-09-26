@@ -1,6 +1,5 @@
 package com.github.sakur35a.functioninlineviewer
 
-import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
@@ -20,14 +19,12 @@ import com.intellij.openapi.util.SystemInfo
 import com.intellij.pom.Navigatable
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.Cursor
-import java.awt.Point
 import java.awt.event.MouseEvent
 import javax.swing.SwingUtilities
 
 /**
- * 선언형 힌트는 일반 클릭에 핸들러를 호출하지 않는다(Ctrl+클릭만 핸들러 호출).
- * 그래서 에디터 마우스 리스너로 클릭을 받아 본문 block inlay 를 붙이거나 뗀다.
- * 펼친 본문 안에서의 Cmd(Ctrl)+클릭 이동과 밑줄 표시도 여기서 처리한다.
+ * 호출부 힌트([CallHintRenderer])를 클릭하면 본문 block inlay 를 붙이거나 뗀다.
+ * 펼친 본문 안에서의 클릭(중첩 펼치기, 더 보기), Cmd(Ctrl)+클릭 이동과 밑줄 표시도 여기서 처리한다.
  */
 class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
@@ -49,8 +46,15 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     override fun mousePressed(e: EditorMouseEvent) {
         if (e.area != EditorMouseEventArea.EDITING_AREA || !SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
         val inlay = e.inlay ?: return
-        val renderer = inlay.renderer as? FunctionBodyRenderer ?: return
         val navigation = isNavigationModifier(e.mouseEvent)
+        if (inlay.renderer is CallHintRenderer) {
+            if (navigation) return
+            HintToggle.toggle(e.editor, inlay.offset)
+            // 캐럿이 힌트 뒤로 옮겨지지 않도록 이 클릭은 소비한다.
+            e.consume()
+            return
+        }
+        val renderer = inlay.renderer as? FunctionBodyRenderer ?: return
         val hit = renderer.hitTest(inlay, e.mouseEvent.point)
         when {
             navigation && hit is BodyHit.Token && hit.token.isNavigable -> navigate(e.editor, hit.node.body, hit.sourceOffset)
@@ -74,14 +78,10 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
         if (renderer == null) {
-            // 플랫폼은 Ctrl 을 눌렀을 때만 손가락 커서를 보여주므로, 토글되는 글자 영역 위에서만 직접 표시한다(여백은 토글되지 않음).
-            if (inlay != null && DeclarativeHint.isOurs(inlay)) {
-                val bounds = inlay.bounds
-                val point = e.mouseEvent.point
-                val overText = bounds != null &&
-                    DeclarativeHint.isOverText(inlay, Point(point.x - bounds.x, point.y - bounds.y)) == true
+            // 호출부 힌트 위: 누르면 펼치거나 접으므로 손가락 커서를 보여주고, 짝이 되는 호출된 이름을 강조한다.
+            if (inlay != null && inlay.renderer is CallHintRenderer) {
                 hoveredInlay = inlay
-                (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, if (overText) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+                (e.editor as? EditorEx)?.setCustomCursor(CURSOR_REQUESTOR, Cursor.getPredefinedCursor(Cursor.HAND_CURSOR))
                 highlightCalledNames(e.editor, key = inlay, offset = inlay.offset)
             }
             return
@@ -173,7 +173,7 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
 
     /**
      * 짝이 되는 호출된 이름을 에디터에서 강조한다(색: Color Scheme 의 "Called name").
-     * 에디터 코드 줄의 힌트는 색을 바꿀 수 없어서(선언형 힌트 API) 힌트에 마우스를 올리거나, 최상위 펼친 본문에
+     * 에디터 코드 줄의 힌트는 한 가지 색으로 그리므로 힌트에 마우스를 올리거나, 최상위 펼친 본문에
      * 마우스를 올렸을 때 쓴다. 이름 위치는 resolve 가 필요하므로 백그라운드에서 구한다. [key] 가 같으면 다시 구하지 않는다.
      */
     private fun highlightCalledNames(editor: Editor, key: Any, offset: Int, nameIndex: Int? = null, nameCount: Int = 0) {
@@ -243,21 +243,5 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
                 if (target != null && target.canNavigate()) target.navigate(true)
             }
             .submit(AppExecutorUtil.getAppExecutorService())
-    }
-
-    override fun mouseClicked(e: EditorMouseEvent) {
-        // 플랫폼 리스너가 ▶/▼ 를 토글할 수 있도록 이벤트를 consume 하지 않는다.
-        if (e.area != EditorMouseEventArea.EDITING_AREA) return
-        if (!SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
-        val inlay = e.inlay ?: return
-        if (!DeclarativeHint.isOurs(inlay)) return
-        val editor = e.editor
-        // 플랫폼은 글자 영역을 일반 클릭했을 때만 토글한다(여백 클릭, Cmd/Ctrl+클릭은 토글하지 않음).
-        // 토글된 힌트는 갱신되므로 HintStateListener 가 본문을 맞춘다. 리스너 실행 순서는 보장되지 않으므로
-        // 여기서도 클릭 처리가 모두 끝난 뒤 한 번 더 맞춘다(같은 상태면 아무것도 하지 않는다).
-        ApplicationManager.getApplication().invokeLater(
-            { HintToggle.syncWithHint(editor, inlay, toggleIfUnknown = true) },
-            { editor.isDisposed || !inlay.isValid },
-        )
     }
 }

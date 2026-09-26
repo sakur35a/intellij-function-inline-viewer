@@ -1,27 +1,14 @@
 package com.github.sakur35a.functioninlineviewer
 
-import com.intellij.codeInsight.hints.declarative.InlayHintsProviderFactory
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.ReadAction
-import com.intellij.lang.java.JavaLanguage
 import com.intellij.psi.PsiMethod
 import com.intellij.psi.util.PsiTreeUtil
-import com.intellij.testFramework.utils.inlays.declarative.DeclarativeInlayHintsProviderTestCase
-import org.jetbrains.kotlin.idea.KotlinLanguage
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.jetbrains.kotlin.psi.KtCallExpression
 import org.jetbrains.kotlin.psi.KtNamedFunction
 
-class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase() {
-
-    /** optional dependency 설정 파일(inline-call-kotlin.xml)이 실제로 로드되는지 확인 */
-    fun testRegisteredForJavaAndKotlin() {
-        for (language in listOf(JavaLanguage.INSTANCE, KotlinLanguage.INSTANCE)) {
-            assertNotNull(
-                language.id,
-                InlayHintsProviderFactory.getProviderInfo(language, InlineCallHintsProvider.PROVIDER_ID),
-            )
-        }
-    }
+class KotlinCallHintsTest : BasePlatformTestCase() {
 
     fun testTopLevelExtensionAndLambda() {
         myFixture.addFileToProject(
@@ -40,20 +27,19 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             }
             """.trimIndent()
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.kt",
             """
             package demo
 
             fun main() {
-                val sum = add(1, 2)/*<# ▶ |add(a, b) #>*/
-                val t = sum.twice()/*<# ▶ |twice() #>*/
+                val sum = add(1, 2)/*<# ▶ add(a, b) #>*/
+                val t = sum.twice()/*<# ▶ twice() #>*/
                 runBlock {
-                    add(3, 4)/*<# ▶ |add(a, b) #>*/
-                }/*<# ▶ |runBlock(block) #>*/
+                    add(3, 4)/*<# ▶ add(a, b) #>*/
+                }/*<# ▶ runBlock(block) #>*/
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -67,16 +53,15 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             }
             """.trimIndent()
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.kt",
             """
             package demo
 
             fun main() {
-                MathUtil.add(1, 2)/*<# ▶ |add(a, b) #>*/
+                MathUtil.add(1, 2)/*<# ▶ add(a, b) #>*/
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -122,24 +107,23 @@ class KotlinInlineCallHintsProviderTest : DeclarativeInlayHintsProviderTestCase(
             }
             """.trimIndent(),
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.kt",
             """
             package demo
 
             fun m(t: T) {
-                val a = t.fahrenheit/*<# ▶ |fahrenheit #>*/
-                t.fahrenheit/*<# ▶ |set fahrenheit #>*/ = 100.0
-                t.fahrenheit/*<# ▶ |set fahrenheit #>*/ += 1.0
+                val a = t.fahrenheit/*<# ▶ fahrenheit #>*/
+                t.fahrenheit/*<# ▶ set fahrenheit #>*/ = 100.0
+                t.fahrenheit/*<# ▶ set fahrenheit #>*/ += 1.0
                 val b = t.plain
                 t.celsius = 2.0
-                val c = t.onlyGetter/*<# ▶ |onlyGetter #>*/
+                val c = t.onlyGetter/*<# ▶ onlyGetter #>*/
                 t.onlyGetter = 3
                 val fahrenheit = 1
                 println(fahrenheit)
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 

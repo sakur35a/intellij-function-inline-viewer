@@ -1,14 +1,5 @@
 <idea-plugin>
-    <!-- K2 지원 선언(supportsKotlinPluginMode)은 Plugin Verifier 가 메인 plugin.xml 만 보므로 거기에 둔다. -->
-    <extensions defaultExtensionNs="com.intellij">
-        <codeInsight.declarativeInlayProvider
-                language="kotlin"
-                implementationClass="com.github.sakur35a.functioninlineviewer.InlineCallHintsProvider"
-                isEnabledByDefault="true"
-                group="OTHER_GROUP"
-                providerId="functioninlineviewer.call.body"
-                bundle="messages.InlineCallBundle"
-                nameKey="inlay.inline.call.name"
-                descriptionKey="inlay.inline.call.description"/>
-    </extensions>
+    <!-- Kotlin 이 있을 때만 로드된다. 등록할 확장은 없고, 이 선택 의존성으로 Kotlin 플러그인 클래스(KotlinPropertyAccess 가 쓰는
+         Kotlin PSI)를 볼 수 있게 한다. 호출부 힌트는 UAST 로 언어와 무관하게 동작한다(CallHints).
+         K2 지원 선언(supportsKotlinPluginMode)은 Plugin Verifier 가 메인 plugin.xml 만 보므로 거기에 둔다. -->
 </idea-plugin>

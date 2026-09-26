@@ -28,7 +28,7 @@
 
     <p>Settings: <i>Settings | Editor | Function Inline Viewer</i> (maximum lines, nesting depth, chain merging)
     and <i>Settings | Editor | Color Scheme | Function Inline Viewer</i> (colors).
-    The hints can be switched off under <i>Settings | Editor | Inlay Hints | Other</i>.</p>
+    The hints can be switched off on the same settings page.</p>
     ]]></description>
 
     <!-- change-notes 는 빌드 시 git 커밋(Conventional Commits)에서 만든다(build.gradle.kts 의 changeNotes). -->
@@ -46,19 +46,11 @@
     <resource-bundle>messages.InlineCallBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <codeInsight.declarativeInlayProvider
-                language="JAVA"
-                implementationClass="com.github.sakur35a.functioninlineviewer.InlineCallHintsProvider"
-                isEnabledByDefault="true"
-                group="OTHER_GROUP"
-                providerId="functioninlineviewer.call.body"
-                bundle="messages.InlineCallBundle"
-                nameKey="inlay.inline.call.name"
-                descriptionKey="inlay.inline.call.description"/>
+        <!-- 호출부 힌트는 이 하이라이팅 패스가 모아 에디터에 붙인다(Java, 그리고 UAST 로 Kotlin). -->
+        <highlightingPassFactory implementation="com.github.sakur35a.functioninlineviewer.CallHints$Factory"/>
 
         <editorFactoryMouseListener implementation="com.github.sakur35a.functioninlineviewer.InlineCallMouseListener"/>
         <editorFactoryMouseMotionListener implementation="com.github.sakur35a.functioninlineviewer.InlineCallMouseListener"/>
-        <editorFactoryListener implementation="com.github.sakur35a.functioninlineviewer.HintStateListener"/>
 
         <colorSettingsPage implementation="com.github.sakur35a.functioninlineviewer.InlineCallColorSettingsPage"/>
 

@@ -1,11 +1,11 @@
 package com.github.sakur35a.functioninlineviewer
 
-import com.intellij.codeInsight.hints.declarative.impl.inlayRenderer.DeclarativeInlayRendererBase
 import com.intellij.openapi.application.impl.NonBlockingReadActionImpl
 import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.event.EditorMouseEvent
 import com.intellij.openapi.editor.event.EditorMouseEventArea
 import java.awt.Point
+import java.awt.event.InputEvent
 import java.awt.event.MouseEvent
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.openapi.application.ApplicationManager
@@ -16,17 +16,20 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiJavaFile
 import com.intellij.testFramework.LightProjectDescriptor
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.util.ui.JBUI
 import com.intellij.testFramework.fixtures.LightJavaCodeInsightFixtureTestCase
-import com.intellij.testFramework.utils.inlays.declarative.DeclarativeInlayHintsProviderTestCase
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
-class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
+class EdgeCasesTest : BasePlatformTestCase() {
 
     override fun getProjectDescriptor(): LightProjectDescriptor = LightJavaCodeInsightFixtureTestCase.JAVA_21
 
     override fun tearDown() {
         try {
             InlineCallSettings.getInstance().loadState(InlineCallSettings.Options())
+            // 가벼운 테스트는 프로젝트를 공유하므로 저장된 펼침 상태가 다음 테스트에서 복원되지 않게 비운다.
+            SavedExpansions.getInstance(project).loadState(SavedExpansions.Entries())
         } finally {
             super.tearDown()
         }
@@ -42,21 +45,20 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
     """.trimIndent()
 
     fun testRecursiveCallHasHint() {
-        doTestProvider(
+        myFixture.checkCallHints(
             "R.java",
             """
             class R {
                 int fact(int n) {
-                    return n <= 1 ? 1 : n * fact(n - 1)/*<# ▶ |fact(n) #>*/;
+                    return n <= 1 ? 1 : n * fact(n - 1)/*<# ▶ fact(n) #>*/;
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
     fun testOverloadsShowTypesAndResolveExactly() {
-        doTestProvider(
+        myFixture.checkCallHints(
             "O.java",
             """
             class O {
@@ -64,13 +66,12 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
                 double add(double a, double b) { return a + b; }
                 int single(int value) { return value; }
                 void run() {
-                    add(1, 2)/*<# ▶ |add(int, int) #>*/;
-                    add(1.0, 2.0)/*<# ▶ |add(double, double) #>*/;
-                    single(1)/*<# ▶ |single(value) #>*/;
+                    add(1, 2)/*<# ▶ add(int, int) #>*/;
+                    add(1.0, 2.0)/*<# ▶ add(double, double) #>*/;
+                    single(1)/*<# ▶ single(value) #>*/;
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -79,23 +80,22 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
      * record 암묵 접근자는 소스에 본문이 없으므로 붙이지 않는다(직접 작성한 접근자는 붙는다).
      */
     fun testSyntheticJavaMethods() {
-        doTestProvider(
+        myFixture.checkCallHints(
             "E.java",
             """
             enum E {
                 A;
                 static void m(R r) {
-                    E.values()/*<# ▶ |values() #>*/;
-                    E.valueOf("A")/*<# ▶ |valueOf(name) #>*/;
+                    E.values()/*<# ▶ values() #>*/;
+                    E.valueOf("A")/*<# ▶ valueOf(name) #>*/;
                     r.x();
-                    r.y()/*<# ▶ |y() #>*/;
+                    r.y()/*<# ▶ y() #>*/;
                 }
             }
             record R(int x, int y) {
                 public int y() { return y; }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -157,7 +157,7 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             }
             """.trimIndent(),
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.java",
             """
             package demo;
@@ -168,14 +168,13 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
                     d.getA();
                     d.getB();
                     d.setB(2);
-                    d.getC()/*<# ▶ |getC() #>*/;
+                    d.getC()/*<# ▶ getC() #>*/;
                     d.getD();
-                    d.setD(3)/*<# ▶ |setD(v) #>*/;
-                    d.f()/*<# ▶ |f() #>*/;
+                    d.setD(3)/*<# ▶ setD(v) #>*/;
+                    d.f()/*<# ▶ f() #>*/;
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -203,21 +202,20 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
 
     fun testSameLineChainIsMerged() {
         myFixture.addFileToProject("demo/B.java", chainClass)
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.java",
             """
             package demo;
             class Main {
                 void run(B b) {
-                    b.foo().bar(1)/*<# ▶ |foo() → bar(x) #>*/;
-                    b.foo().name().trim()/*<# ▶ |foo() → name() #>*/;
+                    b.foo().bar(1)/*<# ▶ foo() → bar(x) #>*/;
+                    b.foo().name().trim()/*<# ▶ foo() → name() #>*/;
                     "x".trim().length();
-                    b.foo()/*<# ▶ |foo() #>*/
-                        .bar(2)/*<# ▶ |bar(x) #>*/;
+                    b.foo()/*<# ▶ foo() #>*/
+                        .bar(2)/*<# ▶ bar(x) #>*/;
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -234,17 +232,16 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
     fun testChainMergeCanBeDisabled() {
         InlineCallSettings.getInstance().state.mergeChains = false
         myFixture.addFileToProject("demo/B.java", chainClass)
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.java",
             """
             package demo;
             class Main {
                 void run(B b) {
-                    b.foo()/*<# ▶ |foo() #>*/.bar(1)/*<# ▶ |bar(x) #>*/;
+                    b.foo()/*<# ▶ foo() #>*/.bar(1)/*<# ▶ bar(x) #>*/;
                 }
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -260,15 +257,14 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             fun K.ext(): K = this
             """.trimIndent(),
         )
-        doTestProvider(
+        myFixture.checkCallHints(
             "Main.kt",
             """
             package demo
             fun run(k: K?) {
-                k?.foo()?.bar(1)?.ext()/*<# ▶ |foo() → bar(x) → ext() #>*/
+                k?.foo()?.bar(1)?.ext()/*<# ▶ foo() → bar(x) → ext() #>*/
             }
             """.trimIndent(),
-            InlineCallHintsProvider(),
         )
     }
 
@@ -644,124 +640,142 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         assertTrue("fresh body must allow navigation", renderers().single().roots.single().body.isUpToDate())
     }
 
-    private fun ourHint(): Inlay<*> =
-        myFixture.editor.inlayModel.getInlineElementsInRange(0, myFixture.editor.document.textLength)
-            .single { (it.renderer as? DeclarativeInlayRendererBase<*>)?.providerId == InlineCallHintsProvider.PROVIDER_ID }
+    private fun ourHint(): Inlay<out CallHintRenderer> = CallHints.hints(myFixture.editor).single()
 
     private fun waitForExpansion() {
         NonBlockingReadActionImpl.waitForAsyncTaskCompletion()
         PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
     }
 
-    /** 본문은 사용자가 보는 화살표(플랫폼 토글)를 따라간다. 화살표가 토글되지 않은 클릭(여백, Cmd+클릭)은 본문도 그대로. */
-    fun testBodyFollowsDisplayedArrow() {
-        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
-        myFixture.doHighlighting()
-        assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
-
-        // 화살표는 ▶ 그대로인데 본문만 펼쳐진 어긋난 상태 -> 맞춰서 접는다.
-        expandCallEndingWith("helper()")
-        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
-        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
-
-        // 화살표 ▶ 이고 본문도 접혀 있으면(토글 안 된 클릭) 아무것도 하지 않는다.
-        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
+    /** 에디터 마우스 리스너로 힌트를 누른다(실제 클릭과 같은 경로). */
+    private fun pressHint(hint: Inlay<*>, navigation: Boolean = false) {
+        val editor = myFixture.editor
+        val bounds = hint.bounds!!
+        val modifiers = if (navigation) (if (SystemInfo.isMac) InputEvent.META_DOWN_MASK else InputEvent.CTRL_DOWN_MASK) else 0
+        val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_PRESSED, 0, modifiers, bounds.x + 2, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
+        val event = EditorMouseEvent(
+            editor, mouse, EditorMouseEventArea.EDITING_AREA, hint.offset,
+            editor.offsetToLogicalPosition(hint.offset), editor.offsetToVisualPosition(hint.offset),
+            true, null, hint, null,
+        )
+        InlineCallMouseListener().mousePressed(event)
         waitForExpansion()
-        assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
-
-        // 펼친 상태에서 힌트가 새로 수집되면 처음 상태가 ▼ 이다.
-        expandCallEndingWith("helper()")
-        edit { myFixture.editor.document.insertString(0, " ") }
-        myFixture.doHighlighting()
-        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
-
-        // 화살표 ▼ 인데 본문이 없으면 펼친다.
-        val end = myFixture.editor.document.text.lastIndexOf("helper()") + "helper()".length
-        assertTrue(ExpandedCalls.collapse(myFixture.editor, end))
-        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
-        waitForExpansion()
-        assertEquals(1, ExpandedCalls.markerCount(myFixture.editor))
     }
 
-    /** 플랫폼 클릭 처리로 화살표를 실제로 토글한 뒤 본문이 따라오는지. 여백 클릭은 토글도 본문 변화도 없다. */
-    fun testPlatformToggleDrivesBody() {
+    /** 힌트를 누르면 본문이 펼쳐지고 화살표가 ▼ 로, 다시 누르면 접히고 ▶ 로 바뀐다. Cmd/Ctrl+클릭은 토글하지 않는다. */
+    fun testClickingHintTogglesBodyAndArrow() {
+        myFixture.checkCallHints("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper()/*<# ▶ helper() #>*/;\n}\n")
+        val editor = myFixture.editor
+
+        pressHint(ourHint())
+        assertEquals(1, ExpandedCalls.markerCount(editor))
+        assertEquals("▼ helper()", ourHint().renderer.text(ourHint()))
+
+        pressHint(ourHint(), navigation = true)
+        assertEquals(1, ExpandedCalls.markerCount(editor))
+
+        pressHint(ourHint())
+        assertEquals(0, ExpandedCalls.markerCount(editor))
+        assertEquals("▶ helper()", ourHint().renderer.text(ourHint()))
+    }
+
+    /** 본문을 계산하는 중에 다시 누르면 펼치기를 취소한다. */
+    fun testSecondClickWhileLoadingCancels() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
         val editor = myFixture.editor
+        HintToggle.toggle(editor, ourHint().offset)
+        HintToggle.toggle(editor, ourHint().offset)
+        waitForExpansion()
+        assertEquals(0, ExpandedCalls.markerCount(editor))
+    }
 
-        fun platformClick(x: Int) {
-            val hint = ourHint()
-            val bounds = hint.bounds!!
-            val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + x, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
-            val event = EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA)
-            (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(event, Point(x, 2), false)
-            HintToggle.syncWithHint(editor, hint, toggleIfUnknown = true)
+    /** 코드를 고쳐 힌트가 다시 모아져도 그대로인 힌트는 유지되고, 화살표는 본문 상태를 따른다. */
+    fun testHintsFollowEditsAndKeepArrow() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
+        myFixture.doHighlighting()
+        val hint = ourHint()
+        pressHint(hint)
+
+        edit { myFixture.editor.document.insertString(0, "// x\n") }
+        myFixture.doHighlighting()
+        assertSame(hint, ourHint())
+        assertEquals(
+            "// x\nclass A {\n    int helper() { return 1; }\n    int v = helper()/*<# ▼ helper() #>*/;\n}\n",
+            myFixture.textWithCallHints(),
+        )
+
+        // 호출을 지우면 힌트도 사라진다.
+        val document = myFixture.editor.document
+        edit { document.replaceString(document.text.indexOf("helper();"), document.text.indexOf("helper();") + "helper()".length, "42") }
+        myFixture.doHighlighting()
+        assertTrue(CallHints.hints(myFixture.editor).isEmpty())
+    }
+
+    /** 파일을 닫았다 다시 열면(IDE 재시작 포함) 펼쳐 두었던 본문이 다시 펼쳐진다. 접어 둔 것은 그대로 접혀 있다. */
+    fun testExpandedBodiesAreRestoredWhenReopened() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n    int w = helper();\n}\n")
+        val document = myFixture.editor.document
+        val hints = CallHints.collect(myFixture.file)
+        val factory = EditorFactory.getInstance()
+
+        val first = factory.createEditor(document, project)
+        try {
+            CallHints.apply(first, hints)
+            HintToggle.expand(first, hints[1].offset)
             waitForExpansion()
+            assertEquals(1, ExpandedCalls.markerCount(first))
+        } finally {
+            factory.releaseEditor(first)
         }
 
-        val middle = ourHint().widthInPixels / 2
-        // 손가락 커서 판정은 플랫폼이 토글하는 영역과 같아야 한다.
-        assertEquals(true, DeclarativeHint.isOverText(ourHint(), Point(middle, 2)))
-        assertEquals(false, DeclarativeHint.isOverText(ourHint(), Point(0, 2)))
+        val reopened = factory.createEditor(document, project)
+        try {
+            CallHints.apply(reopened, hints)
+            waitForExpansion()
+            assertEquals(1, ExpandedCalls.markerCount(reopened))
+            assertTrue(ExpandedCalls.isExpanded(reopened, hints[1].offset))
+            assertFalse(ExpandedCalls.isExpanded(reopened, hints[0].offset))
 
-        platformClick(middle)
-        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
-        assertEquals(1, ExpandedCalls.markerCount(editor))
-
-        platformClick(0) // 왼쪽 여백: 플랫폼이 토글하지 않는다
-        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
-        assertEquals(1, ExpandedCalls.markerCount(editor))
-
-        platformClick(middle)
-        assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
-        assertEquals(0, ExpandedCalls.markerCount(editor))
+            // 접으면 저장된 상태에서도 빠진다.
+            HintToggle.toggle(reopened, hints[1].offset)
+        } finally {
+            factory.releaseEditor(reopened)
+        }
+        val again = factory.createEditor(document, project)
+        try {
+            CallHints.apply(again, hints)
+            waitForExpansion()
+            assertEquals(0, ExpandedCalls.markerCount(again))
+        } finally {
+            factory.releaseEditor(again)
+        }
     }
 
-    /**
-     * IDE 를 다시 켜면 플랫폼은 ▼ 상태를 복원하지만 본문(메모리 상태)은 없다.
-     * 힌트가 추가/갱신될 때 HintStateListener 가 본문을 다시 펼쳐야 한다(클릭 없이).
-     */
-    fun testRestoredExpandedArrowReopensBody() {
-        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
-        myFixture.doHighlighting()
-        val editor = myFixture.editor
-        // 플랫폼 클릭으로 ▼ 로 만든 뒤, 본문만 사라진 상태(= 재시작 직후)를 만든다.
-        val hint = ourHint()
-        val bounds = hint.bounds!!
-        val middle = hint.widthInPixels / 2
-        val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + middle, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
-        (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA), Point(middle, 2), false)
-        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
-        assertEquals(0, ExpandedCalls.markerCount(editor))
-
-        // 힌트 갱신(재시작 시 힌트가 다시 붙는 것과 같은 알림) -> 클릭 없이 본문이 펼쳐진다.
-        ourHint().update()
-        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
-        waitForExpansion()
-        assertEquals(1, ExpandedCalls.markerCount(editor))
-    }
-
-    /** 일괄 접기: 모든 본문이 접히고 힌트 화살표도 ▶ 로 돌아온다(다시 그려져도 본문이 되살아나지 않는다). */
+    /** 일괄 접기: 모든 본문이 접히고 힌트 화살표도 ▶ 로 돌아온다. */
     fun testCollapseAllResetsBodiesAndArrows() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n    int w = helper();\n}\n")
         myFixture.doHighlighting()
         val editor = myFixture.editor
-        for (hint in editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength).filter { DeclarativeHint.isOurs(it) }) {
-            val bounds = hint.bounds!!
-            val middle = hint.widthInPixels / 2
-            val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + middle, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
-            (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA), Point(middle, 2), false)
-            HintToggle.syncWithHint(editor, hint, toggleIfUnknown = false)
-            waitForExpansion()
-        }
+        CallHints.hints(editor).forEach { pressHint(it) }
         assertEquals(2, ExpandedCalls.markerCount(editor))
+        assertEquals(listOf("▼ helper()", "▼ helper()"), CallHints.hints(editor).map { it.renderer.text(it) })
 
         assertTrue(ExpandedCalls.collapseAll(editor))
-        waitForExpansion()
         assertEquals(0, ExpandedCalls.markerCount(editor))
-        val hints = editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength).filter { DeclarativeHint.isOurs(it) }
-        assertEquals(listOf(false, false), hints.map { DeclarativeHint.isExpanded(it) })
+        assertEquals(listOf("▶ helper()", "▶ helper()"), CallHints.hints(editor).map { it.renderer.text(it) })
         assertFalse(ExpandedCalls.collapseAll(editor))
+    }
+
+    /** 설정에서 힌트를 끄면 다음 하이라이팅에서 힌트가 사라지고, 다시 켜면 돌아온다. */
+    fun testHintsCanBeSwitchedOff() {
+        myFixture.checkCallHints("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper()/*<# ▶ helper() #>*/;\n}\n")
+        InlineCallSettings.getInstance().state.showHints = false
+        myFixture.doHighlighting()
+        assertTrue(CallHints.hints(myFixture.editor).isEmpty())
+        InlineCallSettings.getInstance().state.showHints = true
+        myFixture.doHighlighting()
+        assertEquals(1, CallHints.hints(myFixture.editor).size)
     }
 
     fun testDeletedCallRemovesInlayAndMarker() {

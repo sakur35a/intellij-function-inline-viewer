@@ -11,6 +11,8 @@ class InlineCallSettingsTest : BasePlatformTestCase() {
     override fun tearDown() {
         try {
             InlineCallSettings.getInstance().loadState(InlineCallSettings.Options())
+            // 가벼운 테스트는 프로젝트를 공유하므로 저장된 펼침 상태가 다음 테스트에서 복원되지 않게 비운다.
+            SavedExpansions.getInstance(project).loadState(SavedExpansions.Entries())
         } finally {
             super.tearDown()
         }

@@ -13,6 +13,9 @@ import com.intellij.openapi.components.service
 class InlineCallSettings : SimplePersistentStateComponent<InlineCallSettings.Options>(Options()) {
 
     class Options : BaseState() {
+        /** 프로젝트 함수 호출 뒤에 "▶ 함수명" 힌트를 보여준다. */
+        var showHints by property(true)
+
         /** 본문 하나에서 보여줄 최대 줄 수. 넘으면 "… (N more lines)" 로 줄인다. */
         var maxLines by property(FunctionBodyRenderer.DEFAULT_MAX_LINES)
 

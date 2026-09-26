@@ -38,17 +38,11 @@ object ExpandedCalls {
     fun collapse(editor: Editor, callEndOffset: Int): Boolean =
         editor.getUserData(KEY)?.collapse(callEndOffset) == true
 
-    /**
-     * EDT 전용. 에디터의 펼친 본문을 모두 접고, 호출부 힌트의 화살표도 ▶ 로 돌린다. 접은 본문이 있었으면 true.
-     * (본문만 접으면 힌트는 ▼ 로 남고, 다시 그려질 때 본문이 다시 펼쳐진다.)
-     */
+    /** EDT 전용. 에디터의 펼친 본문을 모두 접는다(힌트 화살표도 ▶ 로 다시 그려진다). 접은 본문이 있었으면 true. */
     fun collapseAll(editor: Editor): Boolean {
         val expansions = editor.getUserData(KEY)
         val any = expansions != null && expansions.size > 0
         expansions?.collapseAll()
-        for (inlay in editor.inlayModel.getInlineElementsInRange(0, editor.document.textLength)) {
-            if (DeclarativeHint.isOurs(inlay)) DeclarativeHint.collapseArrow(inlay)
-        }
         return any
     }
 
@@ -84,6 +78,9 @@ object ExpandedCalls {
 
         private val entries = ConcurrentHashMap<RangeMarker, Inlay<FunctionBodyRenderer>>()
 
+        /** 펼친 호출부의 힌트 라벨. 저장/복원([SavedExpansions])할 때 같은 호출인지 확인하는 데 쓴다. */
+        private val labels = ConcurrentHashMap<RangeMarker, String>()
+
         val size: Int get() = entries.size
 
         init {
@@ -117,7 +114,11 @@ object ExpandedCalls {
                 /* priority = */ 0,
                 FunctionBodyRenderer(bodies, indentPx, options.maxLines, options.maxDepth),
             ) ?: return
-            entries[editor.document.createRangeMarker(callRange)] = inlay
+            val marker = editor.document.createRangeMarker(callRange)
+            entries[marker] = inlay
+            CallHints.labelAt(editor, callRange.endOffset)?.let { labels[marker] = it }
+            CallHints.refreshArrow(editor, callRange.endOffset)
+            save()
         }
 
         fun applySettings(recompute: Boolean) {
@@ -130,9 +131,24 @@ object ExpandedCalls {
             if (recompute) scheduleRefresh(force = true)
         }
 
-        private fun remove(marker: RangeMarker) {
+        private fun remove(marker: RangeMarker, save: Boolean = true) {
+            val offset = marker.takeIf { it.isValid }?.endOffset
             entries.remove(marker)?.let { if (it.isValid) Disposer.dispose(it) }
+            labels.remove(marker)
             marker.dispose()
+            if (offset != null) CallHints.refreshArrow(editor, offset)
+            if (save) save()
+        }
+
+        /** 펼친 호출부를 [SavedExpansions] 에 기록해 파일을 다시 열거나 IDE 를 다시 켰을 때 복원되게 한다. */
+        private fun save() {
+            val project = editor.project ?: return
+            if (project.isDisposed) return
+            val file = FileDocumentManager.getInstance().getFile(editor.document) ?: return
+            val expansions = entries.keys.filter { it.isValid }.mapNotNull { marker ->
+                labels[marker]?.let { CallHints.Info(marker.endOffset, it) }
+            }
+            SavedExpansions.getInstance(project).set(file.url, expansions)
         }
 
         private fun isRelevant(document: Document): Boolean {
@@ -237,12 +253,18 @@ object ExpandedCalls {
                 } else {
                     inlay.renderer.replaceRoots(roots)
                     inlay.update()
+                    // 대상이 바뀌면(이름 변경 등) 힌트 라벨도 바뀐다.
+                    CallHints.labelAt(editor, pending.marker.endOffset)?.let { labels[pending.marker] = it }
                 }
             }
+            // 편집으로 호출부 위치가 옮겨졌을 수 있으니 저장해 둔 위치도 갱신한다.
+            save()
         }
 
         override fun dispose() {
-            entries.keys.toList().forEach(::remove)
+            // 에디터가 닫힐 때: 마지막 위치를 저장하고 나서 정리한다(다시 열면 복원된다).
+            save()
+            entries.keys.toList().forEach { remove(it, save = false) }
             editor.putUserData(KEY, null)
         }
     }

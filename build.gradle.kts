@@ -137,13 +137,17 @@ intellijPlatform {
     }
 
     pluginVerification {
-        // 내부 API 사용은 DeclarativeHint.kt 에 모아 둔 의도된 것이라(README 참고) 실패로 치지 않고 리포트로만 본다.
-        // 호환성 문제, 누락된 의존성 등은 계속 실패로 잡는다.
+        // Marketplace 심사는 내부 API 사용을 반려한다. 공개 API 만 쓰도록 내부/비권장/실험 API 사용도 실패로 잡는다.
         failureLevel = listOf(
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.COMPATIBILITY_PROBLEMS,
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.INVALID_PLUGIN,
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.MISSING_DEPENDENCIES,
             org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.NOT_DYNAMIC,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.INTERNAL_API_USAGES,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.DEPRECATED_API_USAGES,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.EXPERIMENTAL_API_USAGES,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.OVERRIDE_ONLY_API_USAGES,
+            org.jetbrains.intellij.platform.gradle.tasks.VerifyPluginTask.FailureLevel.NON_EXTENDABLE_API_USAGES,
         )
         ides {
             // 지원하는 최소 버전(sinceBuild)과 같은 IntelliJ IDEA Ultimate 로 검증한다.

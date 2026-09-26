@@ -24,8 +24,8 @@ IntelliJ IDEA 2026.2 (build 262) or later, with the Java plugin. Kotlin support 
 
 ## Usage
 
-Click the `▶ name(params)` hint after a call. Settings live under **Settings > Editor > Function Inline Viewer**;
-the hint can be toggled under **Settings > Editor > Inlay Hints > Other**.
+Click the `▶ name(params)` hint after a call. Settings, including switching the hints off, live under
+**Settings > Editor > Function Inline Viewer**. Unfolded bodies are restored when a file is reopened.
 
 ## Building
 
@@ -41,8 +41,9 @@ Performance measurement: `./gradlew runIde -Pperf -PopenProject=<path>` records 
 
 ## Verification
 
-`./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2. Internal API usage is reported but does not fail
-the task (see below).
+`./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2 and fails on compatibility problems and on any
+use of internal, deprecated or experimental API. The plugin uses public API only: the call hints are inline inlays added by a
+highlighting pass (`CallHints`), not the platform's declarative inlay hints, whose state cannot be read through public API.
 
 ## Versioning and releases
 
@@ -96,12 +97,6 @@ base64 < chain.crt                                       # new value of CERTIFIC
 ```
 
 Versions published before the certificate expired are not affected.
-
-## Notes on internal APIs
-
-The editor's declarative hints offer no public way to identify a hint's provider or to read which arrow (▶/▼) is displayed,
-so `DeclarativeHint.kt` reads a few `@ApiStatus.Internal` classes (read-only). All internal API use is confined to that file
-and degrades gracefully if the classes change.
 
 ## License
 
