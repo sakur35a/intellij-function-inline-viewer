@@ -4,10 +4,17 @@ plugins {
     id("java")
     id("org.jetbrains.kotlin.jvm") version "2.3.21"
     id("org.jetbrains.intellij.platform") version "2.19.0"
+    id("com.github.jmongard.git-semver-plugin") version "0.19.5"
+}
+
+// 버전은 git 태그(vX.Y.Z)와 그 뒤의 Conventional Commits 로 계산한다(fix: 는 patch, feat: 는 minor, ! / BREAKING CHANGE 는 major).
+// 릴리스는 ./gradlew releaseVersion 으로 "release: vX.Y.Z" 커밋과 vX.Y.Z 태그를 만든다. 그 사이의 빌드는 -SNAPSHOT 이 붙는다.
+semver {
+    releaseTagNameFormat = "v%s"
 }
 
 group = providers.gradleProperty("pluginGroup").get()
-version = providers.gradleProperty("pluginVersion").get()
+version = semver.version
 
 repositories {
     mavenCentral()

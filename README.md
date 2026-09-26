@@ -44,6 +44,20 @@ Performance measurement: `./gradlew runIde -Pperf -PopenProject=<path>` records 
 `./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2. Internal API usage is reported but does not fail
 the task (see below).
 
+## Versioning and releases
+
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/). The version is computed by
+[git-semver-plugin](https://github.com/jmongard/Git.SemVersioning.Gradle) from the latest `vX.Y.Z` tag and the commits after
+it: `fix:` bumps the patch, `feat:` the minor, `feat!:` / `BREAKING CHANGE:` the major version. Builds between releases get a
+`-SNAPSHOT` suffix.
+
+```bash
+./gradlew printVersion      # version of the current checkout
+./gradlew printChangeLog    # changes since the last release
+./gradlew releaseVersion    # "release: vX.Y.Z" commit + vX.Y.Z tag
+./gradlew buildPlugin       # then build the release zip
+```
+
 ## Notes on internal APIs
 
 The editor's declarative hints offer no public way to identify a hint's provider or to read which arrow (▶/▼) is displayed,
