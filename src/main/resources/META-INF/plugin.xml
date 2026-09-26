@@ -27,6 +27,7 @@
 
         <editorFactoryMouseListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
         <editorFactoryMouseMotionListener implementation="com.github.ljk0071.inlinecall.InlineCallMouseListener"/>
+        <editorFactoryListener implementation="com.github.ljk0071.inlinecall.HintStateListener"/>
 
         <applicationConfigurable
                 parentId="editor"

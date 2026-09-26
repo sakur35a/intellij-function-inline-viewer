@@ -346,16 +346,15 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
     fun testBodyFollowsDisplayedArrow() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
-        val listener = InlineCallMouseListener()
         assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
 
         // 화살표는 ▶ 그대로인데 본문만 펼쳐진 어긋난 상태 -> 맞춰서 접는다.
         expandCallEndingWith("helper()")
-        listener.syncWithHint(myFixture.editor, ourHint())
+        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
         assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
 
         // 화살표 ▶ 이고 본문도 접혀 있으면(토글 안 된 클릭) 아무것도 하지 않는다.
-        listener.syncWithHint(myFixture.editor, ourHint())
+        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
         waitForExpansion()
         assertEquals(0, ExpandedCalls.markerCount(myFixture.editor))
 
@@ -368,7 +367,7 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         // 화살표 ▼ 인데 본문이 없으면 펼친다.
         val end = myFixture.editor.document.text.lastIndexOf("helper()") + "helper()".length
         assertTrue(ExpandedCalls.collapse(myFixture.editor, end))
-        listener.syncWithHint(myFixture.editor, ourHint())
+        HintToggle.syncWithHint(myFixture.editor, ourHint(), toggleIfUnknown = true)
         waitForExpansion()
         assertEquals(1, ExpandedCalls.markerCount(myFixture.editor))
     }
@@ -377,7 +376,6 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
     fun testPlatformToggleDrivesBody() {
         myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
         myFixture.doHighlighting()
-        val listener = InlineCallMouseListener()
         val editor = myFixture.editor
 
         fun platformClick(x: Int) {
@@ -386,7 +384,7 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
             val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + x, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
             val event = EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA)
             (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(event, Point(x, 2), false)
-            listener.syncWithHint(editor, hint)
+            HintToggle.syncWithHint(editor, hint, toggleIfUnknown = true)
             waitForExpansion()
         }
 
@@ -406,6 +404,30 @@ class EdgeCasesTest : DeclarativeInlayHintsProviderTestCase() {
         platformClick(middle)
         assertEquals(false, DeclarativeHint.isExpanded(ourHint()))
         assertEquals(0, ExpandedCalls.markerCount(editor))
+    }
+
+    /**
+     * IDE 를 다시 켜면 플랫폼은 ▼ 상태를 복원하지만 본문(메모리 상태)은 없다.
+     * 힌트가 추가/갱신될 때 HintStateListener 가 본문을 다시 펼쳐야 한다(클릭 없이).
+     */
+    fun testRestoredExpandedArrowReopensBody() {
+        myFixture.configureByText("A.java", "class A {\n    int helper() { return 1; }\n    int v = helper();\n}\n")
+        myFixture.doHighlighting()
+        val editor = myFixture.editor
+        // 플랫폼 클릭으로 ▼ 로 만든 뒤, 본문만 사라진 상태(= 재시작 직후)를 만든다.
+        val hint = ourHint()
+        val bounds = hint.bounds!!
+        val middle = hint.widthInPixels / 2
+        val mouse = MouseEvent(editor.contentComponent, MouseEvent.MOUSE_CLICKED, 0, 0, bounds.x + middle, bounds.y + 2, 1, false, MouseEvent.BUTTON1)
+        (hint.renderer as DeclarativeInlayRendererBase<*>).handleLeftClick(EditorMouseEvent(editor, mouse, EditorMouseEventArea.EDITING_AREA), Point(middle, 2), false)
+        assertEquals(true, DeclarativeHint.isExpanded(ourHint()))
+        assertEquals(0, ExpandedCalls.markerCount(editor))
+
+        // 힌트 갱신(재시작 시 힌트가 다시 붙는 것과 같은 알림) -> 클릭 없이 본문이 펼쳐진다.
+        ourHint().update()
+        PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue()
+        waitForExpansion()
+        assertEquals(1, ExpandedCalls.markerCount(editor))
     }
 
     fun testDeletedCallRemovesInlayAndMarker() {
