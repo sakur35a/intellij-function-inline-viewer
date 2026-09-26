@@ -10,6 +10,9 @@ fun main() {
         println(multiply(i, doubled))  // 람다 안: multiply 에만 힌트, println 에는 없음
     }
 
+    // A-2 확인용: 펼친 본문 안의 ▶ twice() 를 다시 펼칠 수 있다.
+    val q = quadruple(sum)
+
     // 표준 라이브러리 호출에는 힌트가 없어야 한다.
     listOf(sum).forEach { println(it) }
 }

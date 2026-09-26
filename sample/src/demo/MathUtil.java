@@ -17,4 +17,12 @@ public class MathUtil {
         }
         return sum;
     }
+
+    public static int factorial(int n) {
+        return n <= 1 ? 1 : multiplyBy(n, factorial(n - 1));
+    }
+
+    private static int multiplyBy(int a, int b) {
+        return a * b;
+    }
 }

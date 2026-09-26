@@ -80,4 +80,85 @@ class FunctionBodyTest : BasePlatformTestCase() {
         myFixture.type("// edit\n")
         assertNull(CallTargets.navigationTarget(project, body, body.token("helper").sourceOffset))
     }
+
+    fun testCollectsOnlyProjectCallsInBody() {
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                int helper(int x) { return x; }
+                int caller(int y) {
+                    System.out.println(y);
+                    return helper(helper(y));
+                }
+            }
+            """.trimIndent(),
+        )
+        val body = CallTargets.body(javaMethod("caller"))!!
+        // 중첩 호출 helper(helper(y)) 는 각각의 호출 끝(안쪽 ")" 와 바깥 ")") 뒤에 힌트가 붙는다.
+        val line = body.lines[2]
+        assertEquals(listOf("helper(x)", "helper(x)"), line.calls.map { it.label })
+        val prefixes = line.calls.map { call -> line.tokens.take(call.afterToken + 1).joinToString("") { it.text } }
+        assertEquals(listOf("    return helper(helper(y)", "    return helper(helper(y))"), prefixes)
+        assertTrue("JDK call must not get a hint", body.lines[1].calls.isEmpty())
+    }
+
+    fun testKotlinCallsInLambda() {
+        myFixture.configureByText(
+            "A.kt",
+            """
+            fun helper(x: Int): Int = x
+
+            fun caller() {
+                listOf(1).forEach { helper(it) }
+            }
+            """.trimIndent(),
+        )
+        val caller = PsiTreeUtil.findChildrenOfType(myFixture.file, KtNamedFunction::class.java).single { it.name == "caller" }
+        val body = FunctionBody.of(caller)!!
+        assertEquals(listOf("helper(x)"), body.lines[1].calls.map { it.label })
+        assertInstanceOf(body.lines[1].calls.single().target.element, KtNamedFunction::class.java)
+    }
+
+    fun testNestedExpandCollapseAndDepthLimit() {
+        myFixture.configureByText(
+            "A.java",
+            """
+            class A {
+                int fact(int n) {
+                    return n <= 1 ? 1 : n * fact(n - 1);
+                }
+            }
+            """.trimIndent(),
+        )
+        val renderer = FunctionBodyRenderer(CallTargets.body(javaMethod("fact"))!!, indentPx = 0, maxDepth = 2)
+
+        fun expandDeepest(): Boolean {
+            var node = renderer.root
+            while (node.children.isNotEmpty()) node = node.children.values.single()
+            val call = node.body.lines[1].calls.single()
+            return renderer.expand(node, call, FunctionBody.of(call.target.element!!)!!)
+        }
+
+        assertTrue(expandDeepest())
+        assertEquals(
+            listOf(
+                "int fact(int n) {",
+                "    return n <= 1 ? 1 : n * fact(n - 1);",
+                "\tint fact(int n) {",
+                "\t    return n <= 1 ? 1 : n * fact(n - 1);",
+                "\t}",
+                "}",
+            ),
+            renderer.visibleText(),
+        )
+        assertTrue(expandDeepest())
+        // depth 2 본문에서는 더 펼칠 수 없다(재귀 호출 무한 전개 방지).
+        assertFalse(expandDeepest())
+        assertEquals(9, renderer.visibleText().size)
+
+        val root = renderer.root
+        assertTrue(renderer.collapse(root, root.body.lines[1].calls.single()))
+        assertEquals(3, renderer.visibleText().size)
+    }
 }

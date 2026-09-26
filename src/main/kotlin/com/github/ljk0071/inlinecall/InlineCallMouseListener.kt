@@ -30,23 +30,27 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
     private var hoveredInlay: Inlay<*>? = null
 
     override fun mousePressed(e: EditorMouseEvent) {
-        if (e.area != EditorMouseEventArea.EDITING_AREA) return
-        if (!SwingUtilities.isLeftMouseButton(e.mouseEvent) || !isNavigationModifier(e.mouseEvent)) return
+        if (e.area != EditorMouseEventArea.EDITING_AREA || !SwingUtilities.isLeftMouseButton(e.mouseEvent)) return
         val inlay = e.inlay ?: return
         val renderer = inlay.renderer as? FunctionBodyRenderer ?: return
+        val navigation = isNavigationModifier(e.mouseEvent)
+        val hit = renderer.hitTest(inlay, e.mouseEvent.point)
+        when {
+            navigation && hit is BodyHit.Token && hit.token.isNavigable -> navigate(e.editor, hit.node.body, hit.sourceOffset)
+            !navigation && hit is BodyHit.Call -> toggleNested(e.editor, inlay, renderer, hit.node, hit.call)
+            !navigation -> return
+        }
         // 본문 아래에 깔린 실제 코드로 이동하거나 캐럿이 움직이지 않도록 이 클릭은 소비한다.
         e.consume()
-        val (token, offset) = renderer.hitTest(inlay, e.mouseEvent.point) ?: return
-        if (!token.isNavigable) return
-        navigate(e.editor, renderer.body, offset)
     }
 
     override fun mouseMoved(e: EditorMouseEvent) {
         val inlay = e.inlay?.takeIf { e.area == EditorMouseEventArea.EDITING_AREA }
         val renderer = inlay?.renderer as? FunctionBodyRenderer
-        val token = if (renderer != null && isNavigationModifier(e.mouseEvent)) {
-            renderer.hitTest(inlay, e.mouseEvent.point)?.first?.takeIf { it.isNavigable }
-        } else null
+        val hit = renderer?.hitTest(inlay, e.mouseEvent.point)
+        val navigation = isNavigationModifier(e.mouseEvent)
+        val token = (hit as? BodyHit.Token)?.token?.takeIf { navigation && it.isNavigable }
+        val clickable = token != null || (!navigation && hit is BodyHit.Call)
 
         if (hoveredInlay != null && hoveredInlay !== inlay) clearHover(e.editor)
         if (renderer == null) return
@@ -54,8 +58,24 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
             renderer.hovered = token
             inlay.repaint()
         }
-        hoveredInlay = if (token != null) inlay else null
-        (e.editor as? EditorEx)?.setCustomCursor(this, if (token != null) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+        hoveredInlay = if (clickable) inlay else null
+        (e.editor as? EditorEx)?.setCustomCursor(this, if (clickable) Cursor.getPredefinedCursor(Cursor.HAND_CURSOR) else null)
+    }
+
+    /** 본문 안의 ▶ 힌트: 펼쳐져 있으면 접고, 아니면 대상 본문을 백그라운드에서 읽어 펼친다. */
+    private fun toggleNested(editor: Editor, inlay: Inlay<*>, renderer: FunctionBodyRenderer, node: BodyNode, call: BodyCall) {
+        if (renderer.collapse(node, call)) {
+            inlay.update()
+            return
+        }
+        val project = editor.project ?: return
+        ReadAction.nonBlocking<FunctionBody?> { call.target.element?.let(FunctionBody::of) }
+            .expireWith(project)
+            .expireWhen { !inlay.isValid }
+            .finishOnUiThread(ModalityState.defaultModalityState()) { body ->
+                if (body != null && renderer.expand(node, call, body)) inlay.update()
+            }
+            .submit(AppExecutorUtil.getAppExecutorService())
     }
 
     override fun mouseExited(e: EditorMouseEvent) {

@@ -12,3 +12,5 @@ fun Int.twice(): Int {
 fun repeatTimes(n: Int, block: (Int) -> Unit) {
     for (i in 0 until n) block(i)
 }
+
+fun quadruple(x: Int): Int = x.twice().twice()

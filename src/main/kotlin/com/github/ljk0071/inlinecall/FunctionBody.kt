@@ -8,6 +8,10 @@ import com.intellij.psi.PsiComment
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiWhiteSpace
+import com.intellij.psi.SmartPointerManager
+import com.intellij.psi.SmartPsiElementPointer
+import com.intellij.psi.SyntaxTraverser
+import java.util.TreeMap
 
 /** 본문의 한 조각. [sourceOffset] 은 원본 파일에서 [text] 가 시작하는 위치. */
 class BodyToken(
@@ -27,7 +31,17 @@ class BodyToken(
     fun withText(newText: String) = BodyToken(newText, sourceOffset, keys, exact)
 }
 
-class BodyLine(val tokens: List<BodyToken>) {
+/**
+ * 본문 안의 프로젝트 함수 호출. [afterToken] 번째 토큰 뒤에 "▶ [label]" 힌트를 그린다.
+ * [target] 은 호출 대상 선언(Kotlin 이면 KtNamedFunction)이며 펼칠 때 다시 읽는다.
+ */
+class BodyCall(
+    val afterToken: Int,
+    val label: String,
+    val target: SmartPsiElementPointer<PsiElement>,
+)
+
+class BodyLine(val tokens: List<BodyToken>, val calls: List<BodyCall> = emptyList()) {
     val text: String get() = tokens.joinToString("") { it.text }
 }
 
@@ -60,6 +74,8 @@ class FunctionBody(
             val highlighter = EditorHighlighterFactory.getInstance().createEditorHighlighter(psiFile.project, file)
             highlighter.setText(chars)
 
+            val callEnds = collectCalls(declaration, start, end)
+
             val firstLine = document.getLineNumber(start)
             val indent = start - document.getLineStartOffset(firstLine)
             val lines = (firstLine..document.getLineNumber(end)).map { line ->
@@ -80,9 +96,34 @@ class FunctionBody(
                     }
                     it.advance()
                 }
-                BodyLine(trimEnd(tokens))
+                val trimmed = trimEnd(tokens)
+                val calls = callEnds.subMap(from + 1, true, lineEnd, true).map { (callEnd, call) ->
+                    // 호출식 마지막 글자를 담은 토큰 뒤에 힌트를 붙인다.
+                    val index = trimmed.indexOfLast { token -> token.sourceOffset < callEnd }
+                    BodyCall(index, call.first, call.second)
+                }
+                BodyLine(trimmed, calls.filter { it.afterToken >= 0 })
             }
             return FunctionBody(file, document.modificationStamp, lines)
+        }
+
+        /** 본문 안의 프로젝트 함수 호출: 호출식 끝 오프셋 -> (라벨, 대상 선언) */
+        private fun collectCalls(
+            declaration: PsiElement,
+            start: Int,
+            end: Int,
+        ): TreeMap<Int, Pair<String, SmartPsiElementPointer<PsiElement>>> {
+            val pointers = SmartPointerManager.getInstance(declaration.project)
+            val result = TreeMap<Int, Pair<String, SmartPsiElementPointer<PsiElement>>>()
+            for (element in SyntaxTraverser.psiTraverser(declaration)) {
+                val callEnd = element.textRange.endOffset
+                if (callEnd <= start || callEnd > end) continue
+                val call = CallTargets.toCall(element) ?: continue
+                val method = CallTargets.resolveProjectMethod(call) ?: continue
+                val (name, params) = CallTargets.signatureOf(method)
+                result[callEnd] = name + params to pointers.createSmartPsiElementPointer(CallTargets.declarationOf(method))
+            }
+            return result
         }
 
         private fun CharSequence.substring(start: Int, end: Int): String = subSequence(start, end).toString()
