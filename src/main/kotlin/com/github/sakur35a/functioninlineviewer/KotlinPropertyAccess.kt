@@ -8,7 +8,6 @@ import com.intellij.psi.util.CachedValueProvider
 import com.intellij.psi.util.CachedValuesManager
 import com.intellij.psi.util.PsiModificationTracker
 import com.intellij.psi.util.PsiTreeUtil
-import org.jetbrains.kotlin.asJava.LightClassUtil
 import org.jetbrains.kotlin.idea.references.mainReference
 import org.jetbrains.kotlin.idea.stubindex.KotlinPropertyShortNameIndex
 import org.jetbrains.kotlin.lexer.KtTokens
@@ -23,6 +22,8 @@ import org.jetbrains.kotlin.psi.KtProperty
 import org.jetbrains.kotlin.psi.KtQualifiedExpression
 import org.jetbrains.kotlin.psi.KtUserType
 import org.jetbrains.kotlin.psi.KtValueArgumentName
+import org.jetbrains.uast.UMethod
+import org.jetbrains.uast.toUElementOfType
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -41,10 +42,10 @@ internal object KotlinPropertyAccess {
         if (!hasWrittenAccessor(reference.project, name, write)) return null
 
         val property = reference.mainReference.resolve() as? KtProperty ?: return null
-        // 같은 이름의 다른 프로퍼티일 수 있으니 light 메서드를 만들기 전에 이 프로퍼티의 접근자를 확인한다.
-        if ((if (write) property.setter else property.getter)?.hasBody() != true) return null
-        val accessors = LightClassUtil.getLightClassPropertyMethods(property)
-        val method = (if (write) accessors.setter else accessors.getter) ?: return null
+        // 같은 이름의 다른 프로퍼티일 수 있으니 메서드로 바꾸기 전에 이 프로퍼티의 접근자를 확인한다.
+        val accessor = (if (write) property.setter else property.getter)?.takeIf { it.hasBody() } ?: return null
+        // 접근자의 PsiMethod 는 UAST 로 얻는다(Kotlin 의 LightClassUtil 은 2026.3 에서 deprecated).
+        val method = accessor.toUElementOfType<UMethod>()?.javaPsi ?: return null
         if (!CallTargets.isProjectDeclaration(method)) return null
         return CallTargets.Hint(reference.textRange, listOf(method), if (write) "set $name" else name, listOf(reference.textRange))
     }
