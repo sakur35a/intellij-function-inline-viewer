@@ -41,7 +41,8 @@ Performance measurement: `./gradlew runIde -Pperf -PopenProject=<path>` records 
 
 ## Verification
 
-`./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2 and fails on compatibility problems and on any
+`./gradlew verifyPlugin` runs the Plugin Verifier against IntelliJ IDEA 2026.2 and the latest EAP of the next version
+(`pluginVerifyEapBuild` in `gradle.properties`), and fails on compatibility problems and on any
 use of internal, deprecated or experimental API. The plugin uses public API only: the call hints are inline inlays added by a
 highlighting pass (`CallHints`), not the platform's declarative inlay hints, whose state cannot be read through public API.
 
