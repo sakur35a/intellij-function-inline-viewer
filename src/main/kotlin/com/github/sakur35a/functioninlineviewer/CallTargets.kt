@@ -6,7 +6,6 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.util.text.StringUtil
-import com.intellij.pom.Navigatable
 import com.intellij.psi.PsiCompiledElement
 import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiElement
@@ -235,7 +234,7 @@ object CallTargets {
      * 본문 원본 파일의 [offset] 에서 Cmd+클릭으로 이동할 위치. 읽기 작업 안에서 호출.
      * 참조면 resolve 결과로, 선언 이름이면 그 선언 자신으로 이동한다.
      */
-    fun navigationTarget(project: Project, body: FunctionBody, offset: Int): Navigatable? {
+    fun navigationTarget(project: Project, body: FunctionBody, offset: Int): OpenFileDescriptor? {
         if (!body.file.isValid) return null
         val psiFile = PsiManager.getInstance(project).findFile(body.file) ?: return null
         val document = PsiDocumentManager.getInstance(project).getDocument(psiFile) ?: return null
@@ -251,8 +250,8 @@ object CallTargets {
         return descriptorOf(target)
     }
 
-    /** [element] 선언 위치로 이동하는 Navigatable. 읽기 작업 안에서 호출. */
-    fun descriptorOf(element: PsiElement): Navigatable? {
+    /** [element] 선언 위치를 여는 OpenFileDescriptor. 읽기 작업 안에서 호출. */
+    fun descriptorOf(element: PsiElement): OpenFileDescriptor? {
         val navigation = element.navigationElement
         val file = navigation.containingFile?.virtualFile ?: return null
         return OpenFileDescriptor(element.project, file, navigation.textOffset)

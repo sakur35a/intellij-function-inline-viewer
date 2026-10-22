@@ -16,7 +16,8 @@ import com.intellij.openapi.editor.event.EditorMouseMotionListener
 import com.intellij.openapi.editor.ex.EditorEx
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
-import com.intellij.pom.Navigatable
+import com.intellij.openapi.fileEditor.FileNavigator
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.util.concurrency.AppExecutorUtil
 import java.awt.Cursor
 import java.awt.event.MouseEvent
@@ -232,15 +233,17 @@ class InlineCallMouseListener : EditorMouseListener, EditorMouseMotionListener {
         navigate(editor) { call.targets.firstNotNullOfOrNull { it.element }?.let(CallTargets::descriptorOf) }
     }
 
-    private fun navigate(editor: Editor, target: (Project) -> Navigatable?) {
+    private fun navigate(editor: Editor, target: (Project) -> OpenFileDescriptor?) {
         val project = editor.project ?: return
         val start = System.nanoTime()
-        ReadAction.nonBlocking<Navigatable?> { target(project) }
+        ReadAction.nonBlocking<OpenFileDescriptor?> { target(project) }
             .inSmartMode(project)
             .expireWith(project)
             .finishOnUiThread(ModalityState.defaultModalityState()) { target ->
                 Perf.since("navigate", start)
-                if (target != null && target.canNavigate()) target.navigate(true)
+                // Navigatable.navigate() 는 263 부터 @OverrideOnly, FileEditorManager.openTextEditor() 는 deprecated 라 FileNavigator 로 연다.
+                val navigator = FileNavigator.getInstance()
+                if (target != null && navigator.canNavigate(target)) navigator.navigate(target, true)
             }
             .submit(AppExecutorUtil.getAppExecutorService())
     }
