@@ -185,6 +185,9 @@ intellijPlatform {
         ides {
             // 지원하는 최소 버전(sinceBuild)과 같은 IntelliJ IDEA Ultimate 로 검증한다.
             create("IU", providers.gradleProperty("platformVersion"))
+            // 최소 버전과 다음 버전 EAP 사이의 정식 버전들도 검증한다.
+            providers.gradleProperty("pluginVerifyVersions").get().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+                .forEach { create("IU", it) }
             // 다음 버전의 최신 EAP 로도 검증한다. Marketplace 는 새 EAP 가 나올 때마다 다시 검증해서,
             // 그 사이 deprecated 가 된 API 를 경고로 알린다(DynamicBundle 생성자, Kotlin LightClassUtil 이 그랬다).
             select {
