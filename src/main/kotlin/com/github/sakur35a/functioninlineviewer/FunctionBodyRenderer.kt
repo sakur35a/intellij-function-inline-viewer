@@ -12,6 +12,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.ColorUtil
 import com.intellij.ui.JBColor
 import com.intellij.util.ui.JBUI
+import com.intellij.util.ui.UIUtil
 import java.awt.Color
 import java.awt.Font
 import java.awt.Graphics2D
@@ -115,7 +116,8 @@ class FunctionBodyRenderer(
             val rainbow: Int? = null,
             val index: Int = -1,
         ) : Piece
-        class Hint(val call: BodyCall, val text: String, override val x: Int, override val width: Int) : Piece
+        /** 본문 안 호출 힌트. 화살표([FoldArrow])는 [expanded] 로 그리고 [text] 는 그 뒤의 라벨. */
+        class Hint(val call: BodyCall, val expanded: Boolean, val text: String, override val x: Int, override val width: Int) : Piece
         class Label(val text: String, override val x: Int, override val width: Int) : Piece
         class Action(val action: MoreAction, val text: String, override val x: Int, override val width: Int) : Piece
     }
@@ -277,10 +279,17 @@ class FunctionBodyRenderer(
             if (acc == null) attrs else TextAttributes.merge(acc, attrs)
         }
 
-    private fun font(editor: Editor, attrs: TextAttributes?): Font =
-        editor.colorsScheme.getFont(EditorFontType.forJavaStyle(attrs?.fontType ?: Font.PLAIN))
+    /**
+     * 에디터 폰트. [text] 를 주면 그 글자를 그릴 수 없는 폰트일 때 대체 글꼴을 섞은 폰트를 돌려준다.
+     * 에디터는 없는 글리프(한글, →, … 등)를 대체 글꼴로 그리지만 drawString 은 그러지 않아 "?" 나 네모로 깨진다.
+     * 잴 때와 그릴 때 같은 [text] 를 넘겨야 폭이 맞는다.
+     */
+    private fun font(editor: Editor, attrs: TextAttributes?, text: String? = null): Font {
+        val font = editor.colorsScheme.getFont(EditorFontType.forJavaStyle(attrs?.fontType ?: Font.PLAIN))
+        return if (text == null) font else UIUtil.getFontWithFallbackIfNeeded(font, text)
+    }
 
-    private fun plainMetrics(editor: Editor) = editor.contentComponent.getFontMetrics(font(editor, null))
+    private fun plainMetrics(editor: Editor, text: String? = null) = editor.contentComponent.getFontMetrics(font(editor, null, text))
 
     /**
      * 펼친 본문 배경. 에디터 배경에 글자색을 살짝 섞고(깊이마다 조금 더), [tint] 색 번호가 있으면 그 색을 옅게 섞는다.
@@ -310,17 +319,15 @@ class FunctionBodyRenderer(
         val showHints = canExpand(row.node)
         line.tokens.forEachIndexed { index, token ->
             val attrs = attributes(editor, token)
-            val width = editor.contentComponent.getFontMetrics(font(editor, attrs)).stringWidth(token.text)
+            val width = editor.contentComponent.getFontMetrics(font(editor, attrs, token.text)).stringWidth(token.text)
             pieces += Piece.Text(token, attrs, x, width, line.tokenColors[index], index)
             x += width
             if (!showHints) return@forEachIndexed
             for (call in line.calls) {
                 if (call.afterToken != index) continue
-                val arrow = if (row.node.children.containsKey(call)) "▼ " else "▶ "
-                val text = arrow + call.label
                 x += hintPadding
-                val hintWidth = plainMetrics(editor).stringWidth(text) + hintPadding * 2
-                pieces += Piece.Hint(call, text, x, hintWidth)
+                val hintWidth = FoldArrow.width(plainMetrics(editor)) + plainMetrics(editor, call.label).stringWidth(call.label) + hintPadding * 2
+                pieces += Piece.Hint(call, row.node.children.containsKey(call), call.label, x, hintWidth)
                 x += hintWidth
             }
         }
@@ -329,18 +336,18 @@ class FunctionBodyRenderer(
 
     /** "… 64 more lines  [next 30] [all]" */
     private fun moreLayout(editor: Editor, row: Row, kind: MoreKind, text: String, inlayX: Int): List<Piece> {
-        val metrics = plainMetrics(editor)
         var x = textX(editor, inlayX, row.node.depth)
         val pieces = ArrayList<Piece>()
-        pieces += Piece.Label(text, x, metrics.stringWidth(text))
-        x += metrics.stringWidth(text) + gap
+        val textWidth = plainMetrics(editor, text).stringWidth(text)
+        pieces += Piece.Label(text, x, textWidth)
+        x += textWidth + gap
         val page = when (kind) {
             MoreKind.LINES -> minOf(maxLines, remainingLines[row.node] ?: maxLines)
             MoreKind.RESULTS -> FunctionBody.RESULT_PAGE
         }
         for (action in listOf(MoreAction(kind, all = false), MoreAction(kind, all = true))) {
             val label = if (action.all) InlineCallBundle.message("body.more.all") else InlineCallBundle.message("body.more.next", page)
-            val width = metrics.stringWidth(label) + hintPadding * 2
+            val width = plainMetrics(editor, label).stringWidth(label) + hintPadding * 2
             pieces += Piece.Action(action, label, x, width)
             x += width + hintPadding
         }
@@ -410,15 +417,15 @@ class FunctionBodyRenderer(
                             g.color = calledNameBackground(editor)
                             g.fillRect(piece.x, rowY, piece.width, lineHeight)
                         }
-                        g.font = font(editor, piece.attrs)
+                        g.font = font(editor, piece.attrs, piece.token.text)
                         g.color = piece.rainbow?.let { rainbowColor(editor, it) } ?: piece.attrs?.foregroundColor ?: scheme.defaultForeground
                         g.drawString(piece.token.text, piece.x, baseline)
                         if (piece.token === hovered) g.fillRect(piece.x, baseline + JBUI.scale(1), piece.width, JBUI.scale(1))
                     }
-                    is Piece.Hint -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline, piece.call.color?.let { rainbowColor(editor, it) })
+                    is Piece.Hint -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline, piece.call.color?.let { rainbowColor(editor, it) }, piece.expanded)
                     is Piece.Action -> drawPill(g, editor, piece.text, piece.x, piece.width, rowY, baseline)
                     is Piece.Label -> {
-                        g.font = font(editor, null)
+                        g.font = font(editor, null, piece.text)
                         g.color = ColorUtil.withAlpha(scheme.defaultForeground, 0.5)
                         g.drawString(piece.text, piece.x, baseline)
                     }
@@ -428,17 +435,26 @@ class FunctionBodyRenderer(
     }
 
     /** 클릭할 수 있는 조각(본문 안 ▶ 힌트, 더 보기 버튼)은 인레이 힌트처럼 둥근 배경 위에 그린다. */
-    /** [accent] 가 있으면(무지개 색) 배경에 살짝 섞고 글자를 그 색으로 그린다. */
-    private fun drawPill(g: Graphics2D, editor: Editor, text: String, x: Int, width: Int, rowY: Int, baseline: Int, accent: Color? = null) {
+    /** [accent] 가 있으면(무지개 색) 배경에 살짝 섞고 글자를 그 색으로 그린다. [expanded] 가 있으면 글자 앞에 화살표를 그린다. */
+    private fun drawPill(
+        g: Graphics2D, editor: Editor, text: String, x: Int, width: Int, rowY: Int, baseline: Int,
+        accent: Color? = null, expanded: Boolean? = null,
+    ) {
         val hintAttrs = hintAttributes(editor)
         val lineHeight = editor.lineHeight
         val background = hintAttrs?.backgroundColor ?: editor.colorsScheme.defaultBackground
         g.color = if (accent != null) ColorUtil.mix(background, accent, 0.25) else background
         val arc = JBUI.scale(6)
         g.fillRoundRect(x, rowY + JBUI.scale(1), width, lineHeight - JBUI.scale(2), arc, arc)
-        g.font = font(editor, null)
         g.color = accent ?: hintAttrs?.foregroundColor ?: JBColor.GRAY
-        g.drawString(text, x + hintPadding, baseline)
+        var textX = x + hintPadding
+        if (expanded != null) {
+            val metrics = plainMetrics(editor)
+            FoldArrow.paint(g, metrics, textX, baseline, expanded)
+            textX += FoldArrow.width(metrics)
+        }
+        g.font = font(editor, null, text)
+        g.drawString(text, textX, baseline)
     }
 
     /** 호출 구분 색(기본은 IDE 무지개 색, Color Scheme 에서 변경 가능). 스킴에 없으면 기본 팔레트. */
@@ -465,7 +481,7 @@ class FunctionBodyRenderer(
             is Piece.Action -> BodyHit.More(row.node, piece.action)
             is Piece.Label -> null
             is Piece.Text -> {
-                val fm = editor.contentComponent.getFontMetrics(font(editor, piece.attrs))
+                val fm = editor.contentComponent.getFontMetrics(font(editor, piece.attrs, piece.token.text))
                 val text = piece.token.text
                 var index = 0
                 while (index < text.length && piece.x + fm.stringWidth(text.substring(0, index + 1)) <= point.x) index++
